@@ -59,20 +59,18 @@ type ObjectHeader struct {
 }
 
 // writeLooseObject writes data as a zlib-compressed loose git object.
-// data must be the full object bytes including the header (e.g. "blob 5\x00hello").
-// Returns the OID as raw bytes.
-func writeLooseObject(repoDir string, hashKind HashKind, data []byte) ([]byte, error) {
+func (repo *Repo) writeLooseObject(data []byte) ([]byte, error) {
+	hashKind := repo.opts.Hash
 	oidBytes := hashKind.HashBytes(data)
 	oidHex := hex.EncodeToString(oidBytes)
 
-	objDir := filepath.Join(repoDir, "objects", oidHex[:2])
+	objDir := filepath.Join(repo.repoDir, "objects", oidHex[:2])
 	if err := os.MkdirAll(objDir, 0755); err != nil {
 		return nil, err
 	}
 
 	objPath := filepath.Join(objDir, oidHex[2:])
 
-	// exit early if the object already exists
 	if _, err := os.Stat(objPath); err == nil {
 		return oidBytes, nil
 	}
@@ -96,8 +94,8 @@ func writeLooseObject(repoDir string, hashKind HashKind, data []byte) ([]byte, e
 }
 
 // readLooseObject reads and decompresses a loose git object.
-func readLooseObject(repoDir string, oidHex string) ([]byte, error) {
-	objPath := filepath.Join(repoDir, "objects", oidHex[:2], oidHex[2:])
+func (repo *Repo) readLooseObject(oidHex string) ([]byte, error) {
+	objPath := filepath.Join(repo.repoDir, "objects", oidHex[:2], oidHex[2:])
 	file, err := os.Open(objPath)
 	if err != nil {
 		return nil, err
@@ -114,7 +112,6 @@ func readLooseObject(repoDir string, oidHex string) ([]byte, error) {
 }
 
 // parseObjectHeader parses a git object header from decompressed data.
-// Returns the header and the byte offset where content begins.
 func parseObjectHeader(data []byte) (ObjectHeader, int, error) {
 	spaceIdx := bytes.IndexByte(data, ' ')
 	if spaceIdx < 0 {
@@ -141,9 +138,9 @@ func parseObjectHeader(data []byte) (ObjectHeader, int, error) {
 	return ObjectHeader{Kind: kind, Size: size}, nullIdx + 1, nil
 }
 
-// ReadObjectKind reads a loose object and returns just its kind.
-func ReadObjectKind(repoDir string, oidHex string) (ObjectKind, error) {
-	data, err := readLooseObject(repoDir, oidHex)
+// readObjectKind reads a loose object and returns just its kind.
+func (repo *Repo) readObjectKind(oidHex string) (ObjectKind, error) {
+	data, err := repo.readLooseObject(oidHex)
 	if err != nil {
 		return 0, err
 	}
@@ -154,9 +151,9 @@ func ReadObjectKind(repoDir string, oidHex string) (ObjectKind, error) {
 	return header.Kind, nil
 }
 
-// ReadCommitTree reads a commit object and returns its tree hash hex string.
-func ReadCommitTree(repoDir string, hashKind HashKind, oidHex string) (string, error) {
-	data, err := readLooseObject(repoDir, oidHex)
+// readCommitTree reads a commit object and returns its tree hash hex string.
+func (repo *Repo) readCommitTree(oidHex string) (string, error) {
+	data, err := repo.readLooseObject(oidHex)
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +166,7 @@ func ReadCommitTree(repoDir string, hashKind HashKind, oidHex string) (string, e
 	if !bytes.HasPrefix(content, []byte("tree ")) {
 		return "", errors.New("invalid commit: missing tree")
 	}
-	hexLen := hashKind.HexLen()
+	hexLen := repo.opts.Hash.HexLen()
 	if len(content) < 5+hexLen {
 		return "", errors.New("invalid commit: tree hash too short")
 	}
@@ -183,8 +180,8 @@ type treeBuilder struct {
 }
 
 type treeBuilderEntry struct {
-	sortKey string // name for blobs, name+"/" for subtrees
-	data    []byte // serialized: "<mode> <name>\0<oid_bytes>"
+	sortKey string
+	data    []byte
 }
 
 func newTreeBuilder() *treeBuilder {
@@ -208,13 +205,12 @@ func (t *treeBuilder) addTreeEntry(name string, oidBytes []byte) {
 	copy(data, header)
 	copy(data[len(header):], oidBytes)
 	t.entries = append(t.entries, treeBuilderEntry{
-		sortKey: name + "/", // git sorts tree names as if they had a trailing slash
+		sortKey: name + "/",
 		data:    data,
 	})
 }
 
-// writeTreeObject sorts entries, serializes, and writes the tree object.
-func writeTreeObject(repoDir string, hashKind HashKind, tree *treeBuilder) ([]byte, error) {
+func (repo *Repo) writeTreeObject(tree *treeBuilder) ([]byte, error) {
 	sort.Slice(tree.entries, func(i, j int) bool {
 		return tree.entries[i].sortKey < tree.entries[j].sortKey
 	})
@@ -230,16 +226,15 @@ func writeTreeObject(repoDir string, hashKind HashKind, tree *treeBuilder) ([]by
 	copy(fullObj, header)
 	copy(fullObj[len(header):], contentBytes)
 
-	return writeLooseObject(repoDir, hashKind, fullObj)
+	return repo.writeLooseObject(fullObj)
 }
 
-// writeBlob writes a blob object and returns the OID bytes.
-func writeBlob(repoDir string, hashKind HashKind, content []byte) ([]byte, error) {
+func (repo *Repo) writeBlob(content []byte) ([]byte, error) {
 	header := fmt.Sprintf("blob %d\x00", len(content))
 	fullObj := make([]byte, len(header)+len(content))
 	copy(fullObj, header)
 	copy(fullObj[len(header):], content)
-	return writeLooseObject(repoDir, hashKind, fullObj)
+	return repo.writeLooseObject(fullObj)
 }
 
 // CommitMetadata holds metadata for creating a commit.
@@ -252,20 +247,18 @@ type CommitMetadata struct {
 }
 
 // signContent signs content using ssh-keygen and returns the signature lines.
-func signContent(repoDir, workPath string, lines []string, signingKey string, isTest bool) ([]string, error) {
+func (repo *Repo) signContent(lines []string, signingKey string) ([]string, error) {
 	content := strings.Join(lines, "\n")
 
-	// write content to temp file in the .git dir
 	contentFileName := "xit_signing_buffer"
-	contentFilePath := filepath.Join(workPath, ".git", contentFileName)
+	contentFilePath := filepath.Join(repo.workPath, ".git", contentFileName)
 	if err := os.WriteFile(contentFilePath, []byte(content), 0644); err != nil {
 		return nil, err
 	}
 	defer os.Remove(contentFilePath)
 
-	// run ssh-keygen to sign
 	cmd := exec.Command("ssh-keygen", "-Y", "sign", "-n", "git", "-f", signingKey, contentFilePath)
-	if !isTest {
+	if !repo.opts.IsTest {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -275,9 +268,8 @@ func signContent(repoDir, workPath string, lines []string, signingKey string, is
 		return nil, fmt.Errorf("object signing failed: %w", err)
 	}
 
-	// read the signature file
 	sigFileName := contentFileName + ".sig"
-	sigFilePath := filepath.Join(repoDir, sigFileName)
+	sigFilePath := filepath.Join(repo.repoDir, sigFileName)
 	sigData, err := os.ReadFile(sigFilePath)
 	if err != nil {
 		return nil, err
@@ -288,8 +280,7 @@ func signContent(repoDir, workPath string, lines []string, signingKey string, is
 	return strings.Split(sigContent, "\n"), nil
 }
 
-// buildTreeFromIndex recursively builds tree objects from the index.
-func buildTreeFromIndex(repoDir string, hashKind HashKind, idx *Index, prefix string, childNames []string) ([]byte, error) {
+func (repo *Repo) buildTreeFromIndex(idx *Index, prefix string, childNames []string) ([]byte, error) {
 	tree := newTreeBuilder()
 
 	for _, name := range childNames {
@@ -301,7 +292,7 @@ func buildTreeFromIndex(repoDir string, hashKind HashKind, idx *Index, prefix st
 		}
 
 		if entries, ok := idx.entries[path]; ok {
-			entry := entries[0] // stage 0
+			entry := entries[0]
 			if entry != nil {
 				tree.addBlobEntry(entry.mode, name, entry.oid)
 			}
@@ -310,7 +301,7 @@ func buildTreeFromIndex(repoDir string, hashKind HashKind, idx *Index, prefix st
 			for k := range children {
 				childNamesList = append(childNamesList, k)
 			}
-			subtreeOID, err := buildTreeFromIndex(repoDir, hashKind, idx, path, childNamesList)
+			subtreeOID, err := repo.buildTreeFromIndex(idx, path, childNamesList)
 			if err != nil {
 				return nil, err
 			}
@@ -320,14 +311,14 @@ func buildTreeFromIndex(repoDir string, hashKind HashKind, idx *Index, prefix st
 		}
 	}
 
-	return writeTreeObject(repoDir, hashKind, tree)
+	return repo.writeTreeObject(tree)
 }
 
-func checkForUnfinishedMerge(repoDir string) error {
+func (repo *Repo) checkForUnfinishedMerge() error {
 	mergeHeadNames := []string{"MERGE_HEAD", "CHERRY_PICK_HEAD"}
 	for _, name := range mergeHeadNames {
 		ref := RefOrOid{IsRef: true, Ref: Ref{Kind: RefNone, Name: name}}
-		oid, err := ReadRefRecur(repoDir, ref)
+		oid, err := repo.readRefRecur(ref)
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
 			return err
 		}
@@ -338,15 +329,11 @@ func checkForUnfinishedMerge(repoDir string) error {
 	return nil
 }
 
-// WriteCommit creates a new commit object and updates HEAD.
-// Returns the hex OID of the new commit.
-func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadata) (string, error) {
-	hashKind := opts.Hash
-
-	// get parent OIDs
+// writeCommit creates a new commit object and updates HEAD.
+func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 	parentOIDs := metadata.ParentOIDs
 	if parentOIDs == nil {
-		headOID, err := ReadHeadRecurMaybe(repoDir)
+		headOID, err := repo.ReadHeadRecurMaybe()
 		if err != nil {
 			return "", err
 		}
@@ -357,37 +344,33 @@ func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadat
 		}
 	}
 
-	// check for unfinished merge
-	if err := checkForUnfinishedMerge(repoDir); err != nil {
+	if err := repo.checkForUnfinishedMerge(); err != nil {
 		return "", err
 	}
 
-	// read index
-	idx, err := ReadIndex(repoDir, hashKind)
+	idx, err := repo.readIndex()
 	if err != nil {
 		return "", err
 	}
 
-	// build tree from index
 	var rootChildNames []string
 	for k := range idx.rootChildren {
 		rootChildNames = append(rootChildNames, k)
 	}
 
-	treeOIDBytes, err := buildTreeFromIndex(repoDir, hashKind, idx, "", rootChildNames)
+	treeOIDBytes, err := repo.buildTreeFromIndex(idx, "", rootChildNames)
 	if err != nil {
 		return "", err
 	}
 	treeOIDHex := hex.EncodeToString(treeOIDBytes)
 
-	// don't allow empty commit
 	if !metadata.AllowEmpty {
 		if len(parentOIDs) == 0 {
 			if len(rootChildNames) == 0 {
 				return "", errors.New("empty commit")
 			}
 		} else if len(parentOIDs) == 1 {
-			parentTree, err := ReadCommitTree(repoDir, hashKind, parentOIDs[0])
+			parentTree, err := repo.readCommitTree(parentOIDs[0])
 			if err != nil {
 				return "", err
 			}
@@ -397,13 +380,11 @@ func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadat
 		}
 	}
 
-	// load config for author/committer and signing key
-	config, err := LoadConfig(repoDir)
+	config, err := repo.loadConfig()
 	if err != nil {
 		return "", err
 	}
 
-	// build commit content lines
 	var lines []string
 	lines = append(lines, fmt.Sprintf("tree %s", treeOIDHex))
 	for _, parent := range parentOIDs {
@@ -411,13 +392,13 @@ func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadat
 	}
 
 	var ts uint64
-	if !opts.IsTest {
+	if !repo.opts.IsTest {
 		ts = uint64(time.Now().Unix())
 	}
 
 	author := metadata.Author
 	if author == "" {
-		if opts.IsTest {
+		if repo.opts.IsTest {
 			author = "radar <radar@roark>"
 		} else {
 			userSection := config.GetSection("user")
@@ -442,17 +423,14 @@ func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadat
 
 	lines = append(lines, fmt.Sprintf("\n%s", metadata.Message))
 
-	// sign if signing key exists in config
 	userSection := config.GetSection("user")
 	if userSection != nil {
 		if signingKey, ok := userSection["signingkey"]; ok {
-			sigLines, err := signContent(repoDir, workPath, lines, signingKey, opts.IsTest)
+			sigLines, err := repo.signContent(lines, signingKey)
 			if err != nil {
 				return "", err
 			}
 
-			// format gpgsig header: first line prefixed with "gpgsig ",
-			// subsequent lines prefixed with " "
 			var headerLines []string
 			for i, line := range sigLines {
 				if i == 0 {
@@ -462,7 +440,6 @@ func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadat
 				}
 			}
 
-			// pop message, add sig, add message back
 			msg := lines[len(lines)-1]
 			lines = lines[:len(lines)-1]
 			lines = append(lines, headerLines...)
@@ -472,39 +449,34 @@ func WriteCommit(repoDir, workPath string, opts RepoOpts, metadata CommitMetadat
 
 	commitContent := strings.Join(lines, "\n")
 
-	// build full object
 	header := fmt.Sprintf("commit %d\x00", len(commitContent))
 	fullObj := make([]byte, len(header)+len(commitContent))
 	copy(fullObj, header)
 	copy(fullObj[len(header):], commitContent)
 
-	// write object
-	oidBytes, err := writeLooseObject(repoDir, hashKind, fullObj)
+	oidBytes, err := repo.writeLooseObject(fullObj)
 	if err != nil {
 		return "", err
 	}
 	oidHex := hex.EncodeToString(oidBytes)
 
-	// write commit id to HEAD
-	if err := WriteRefRecur(repoDir, "HEAD", oidHex); err != nil {
+	if err := repo.writeRefRecur("HEAD", oidHex); err != nil {
 		return "", err
 	}
 
 	return oidHex, nil
 }
 
-// WriteTagObject creates a new tag object. Returns the hex OID.
-func WriteTagObject(repoDir, workPath string, opts RepoOpts, input AddTagInput, targetOID string) (string, error) {
-	hashKind := opts.Hash
+// writeTagObject creates a new tag object. Returns the hex OID.
+func (repo *Repo) writeTagObject(input AddTagInput, targetOID string) (string, error) {
+	hashKind := repo.opts.Hash
 
-	// determine target object kind
-	targetKind, err := ReadObjectKind(repoDir, targetOID)
+	targetKind, err := repo.readObjectKind(targetOID)
 	if err != nil {
 		return "", err
 	}
 
-	// load config
-	config, err := LoadConfig(repoDir)
+	config, err := repo.loadConfig()
 	if err != nil {
 		return "", err
 	}
@@ -515,13 +487,13 @@ func WriteTagObject(repoDir, workPath string, opts RepoOpts, input AddTagInput, 
 	lines = append(lines, fmt.Sprintf("tag %s", input.Name))
 
 	var ts uint64
-	if !opts.IsTest {
+	if !repo.opts.IsTest {
 		ts = uint64(time.Now().Unix())
 	}
 
 	tagger := input.Tagger
 	if tagger == "" {
-		if opts.IsTest {
+		if repo.opts.IsTest {
 			tagger = "radar <radar@roark>"
 		} else {
 			userSection := config.GetSection("user")
@@ -541,11 +513,10 @@ func WriteTagObject(repoDir, workPath string, opts RepoOpts, input AddTagInput, 
 	msg := input.Message
 	lines = append(lines, fmt.Sprintf("\n%s", msg))
 
-	// sign if signing key exists in config
 	userSection := config.GetSection("user")
 	if userSection != nil {
 		if signingKey, ok := userSection["signingkey"]; ok {
-			sigLines, err := signContent(repoDir, workPath, lines, signingKey, opts.IsTest)
+			sigLines, err := repo.signContent(lines, signingKey)
 			if err != nil {
 				return "", err
 			}
@@ -555,18 +526,17 @@ func WriteTagObject(repoDir, workPath string, opts RepoOpts, input AddTagInput, 
 
 	tagContent := strings.Join(lines, "\n")
 
-	// build full object
 	header := fmt.Sprintf("tag %d\x00", len(tagContent))
 	fullObj := make([]byte, len(header)+len(tagContent))
 	copy(fullObj, header)
 	copy(fullObj[len(header):], tagContent)
 
-	// write object
-	oidBytes, err := writeLooseObject(repoDir, hashKind, fullObj)
+	oidBytes, err := repo.writeLooseObject(fullObj)
 	if err != nil {
 		return "", err
 	}
 
+	_ = hashKind // used implicitly via writeLooseObject
 	return hex.EncodeToString(oidBytes), nil
 }
 
@@ -575,17 +545,16 @@ func WriteTagObject(repoDir, workPath string, opts RepoOpts, input AddTagInput, 
 // ---------------------------------------------------------------------------
 
 type ObjectReader struct {
-	repoDir  string
-	hashKind HashKind
-	inner    *LooseOrPackObjectReader
+	repo  *Repo
+	inner *LooseOrPackObjectReader
 }
 
-func NewObjectReader(repoDir string, hashKind HashKind, oidHex string) (*ObjectReader, error) {
-	inner, err := NewLooseOrPackObjectReader(repoDir, hashKind, oidHex)
+func (repo *Repo) NewObjectReader(oidHex string) (*ObjectReader, error) {
+	inner, err := newLooseOrPackObjectReader(repo, oidHex)
 	if err != nil {
 		return nil, err
 	}
-	return &ObjectReader{repoDir: repoDir, hashKind: hashKind, inner: inner}, nil
+	return &ObjectReader{repo: repo, inner: inner}, nil
 }
 
 func (r *ObjectReader) Close() {
@@ -651,8 +620,8 @@ type Object struct {
 	reader *ObjectReader
 }
 
-func NewObject(repoDir string, hashKind HashKind, oidHex string, full bool) (*Object, error) {
-	rdr, err := NewObjectReader(repoDir, hashKind, oidHex)
+func (repo *Repo) NewObject(oidHex string, full bool) (*Object, error) {
+	rdr, err := repo.NewObjectReader(oidHex)
 	if err != nil {
 		return nil, err
 	}
@@ -666,7 +635,7 @@ func NewObject(repoDir string, hashKind HashKind, oidHex string, full bool) (*Ob
 	}
 
 	if full {
-		if err := obj.parseContent(hashKind); err != nil {
+		if err := obj.parseContent(repo.opts.Hash); err != nil {
 			rdr.Close()
 			return nil, err
 		}
@@ -688,9 +657,9 @@ func (o *Object) parseContent(hashKind HashKind) error {
 	case ObjectKindTree:
 		return o.parseTree(hashKind)
 	case ObjectKindCommit:
-		return o.parseCommit(hashKind)
+		return o.parseCommit()
 	case ObjectKindTag:
-		return o.parseTag(hashKind)
+		return o.parseTag()
 	}
 	return nil
 }
@@ -704,7 +673,6 @@ func (o *Object) parseTree(hashKind HashKind) error {
 	var entries []TreeContentEntry
 	pos := 0
 	for pos < len(data) {
-		// find space (separates mode from name)
 		spIdx := bytes.IndexByte(data[pos:], ' ')
 		if spIdx < 0 {
 			return errors.New("invalid tree entry: no space")
@@ -712,7 +680,6 @@ func (o *Object) parseTree(hashKind HashKind) error {
 		modeStr := string(data[pos : pos+spIdx])
 		pos += spIdx + 1
 
-		// find null (separates name from OID)
 		nullIdx := bytes.IndexByte(data[pos:], 0)
 		if nullIdx < 0 {
 			return errors.New("invalid tree entry: no null")
@@ -742,7 +709,7 @@ func (o *Object) parseTree(hashKind HashKind) error {
 	return nil
 }
 
-func (o *Object) parseCommit(hashKind HashKind) error {
+func (o *Object) parseCommit() error {
 	data, err := io.ReadAll(o.reader)
 	if err != nil {
 		return err
@@ -750,7 +717,6 @@ func (o *Object) parseCommit(hashKind HashKind) error {
 	content := string(data)
 	cc := &CommitContent{}
 
-	// split headers from message at double newline
 	parts := strings.SplitN(content, "\n\n", 2)
 	headerSection := parts[0]
 	if len(parts) > 1 {
@@ -768,14 +734,13 @@ func (o *Object) parseCommit(hashKind HashKind) error {
 		} else if strings.HasPrefix(line, "committer ") {
 			cc.Committer = line[10:]
 		}
-		// skip gpgsig and other headers
 	}
 
 	o.Commit = cc
 	return nil
 }
 
-func (o *Object) parseTag(hashKind HashKind) error {
+func (o *Object) parseTag() error {
 	data, err := io.ReadAll(o.reader)
 	if err != nil {
 		return err
@@ -831,26 +796,21 @@ type oidQueueEntry struct {
 }
 
 type ObjectIterator struct {
-	repoDir  string
-	hashKind HashKind
+	repo     *Repo
 	options  ObjectIteratorOptions
 	queue    []oidQueueEntry
 	excludes map[string]bool
-	current  *Object
 }
 
-func NewObjectIterator(repoDir string, hashKind HashKind, opts ObjectIteratorOptions) *ObjectIterator {
+func (repo *Repo) NewObjectIterator(opts ObjectIteratorOptions) *ObjectIterator {
 	return &ObjectIterator{
-		repoDir:  repoDir,
-		hashKind: hashKind,
+		repo:     repo,
 		options:  opts,
 		excludes: make(map[string]bool),
 	}
 }
 
-func (it *ObjectIterator) Close() {
-	// queue entries are just strings, nothing to free
-}
+func (it *ObjectIterator) Close() {}
 
 func (it *ObjectIterator) Include(oidHex string) {
 	it.includeAtDepth(oidHex, 0)
@@ -868,7 +828,7 @@ func (it *ObjectIterator) includeAtDepth(oidHex string, depth int) {
 func (it *ObjectIterator) Exclude(oidHex string) error {
 	it.excludes[oidHex] = true
 
-	obj, err := NewObject(it.repoDir, it.hashKind, oidHex, true)
+	obj, err := it.repo.NewObject(oidHex, true)
 	if err != nil {
 		return err
 	}
@@ -882,8 +842,7 @@ func (it *ObjectIterator) Exclude(oidHex string) error {
 				if entry.Mode.ObjType() == ModeObjectTypeGitlink {
 					continue
 				}
-				entryOIDHex := hex.EncodeToString(entry.OID)
-				if err := it.Exclude(entryOIDHex); err != nil {
+				if err := it.Exclude(hex.EncodeToString(entry.OID)); err != nil {
 					return err
 				}
 			}
@@ -903,8 +862,7 @@ func (it *ObjectIterator) Exclude(oidHex string) error {
 	return nil
 }
 
-// Next returns the next object in raw mode (reader positioned at content start).
-// The caller must Close the returned Object. Returns nil when done.
+// Next returns the next object in raw mode. The caller must Close the returned Object.
 func (it *ObjectIterator) Next() (*Object, error) {
 	for len(it.queue) > 0 {
 		entry := it.queue[0]
@@ -915,15 +873,13 @@ func (it *ObjectIterator) Next() (*Object, error) {
 		}
 		it.excludes[entry.oid] = true
 
-		// open full to discover references
-		fullObj, err := NewObject(it.repoDir, it.hashKind, entry.oid, true)
+		fullObj, err := it.repo.NewObject(entry.oid, true)
 		if err != nil {
 			return nil, err
 		}
 
 		it.includeContentRefs(fullObj, entry.depth+1)
 
-		// filter by kind
 		if it.options.Kind == ObjectIterCommit && fullObj.Kind != ObjectKindCommit {
 			fullObj.Close()
 			continue
@@ -931,8 +887,7 @@ func (it *ObjectIterator) Next() (*Object, error) {
 
 		fullObj.Close()
 
-		// re-open as raw
-		rawObj, err := NewObject(it.repoDir, it.hashKind, entry.oid, false)
+		rawObj, err := it.repo.NewObject(entry.oid, false)
 		if err != nil {
 			return nil, err
 		}
@@ -973,10 +928,10 @@ func (it *ObjectIterator) includeContentRefs(obj *Object, childDepth int) {
 // writeObjectFromReader – streaming write of an object to loose storage
 // ---------------------------------------------------------------------------
 
-func writeObjectFromReader(repoDir string, hashKind HashKind, header ObjectHeader, reader io.Reader) ([]byte, error) {
+func (repo *Repo) writeObjectFromReader(header ObjectHeader, reader io.Reader) ([]byte, error) {
 	headerStr := fmt.Sprintf("%s %d\x00", header.Kind.Name(), header.Size)
 
-	tempFile, err := os.CreateTemp(repoDir, "object.temp.*")
+	tempFile, err := os.CreateTemp(repo.repoDir, "object.temp.*")
 	if err != nil {
 		return nil, err
 	}
@@ -984,7 +939,7 @@ func writeObjectFromReader(repoDir string, hashKind HashKind, header ObjectHeade
 	defer os.Remove(tempPath)
 	defer tempFile.Close()
 
-	hasher := hashKind.NewHasher()
+	hasher := repo.opts.Hash.NewHasher()
 	hasher.Write([]byte(headerStr))
 	if _, err := tempFile.Write([]byte(headerStr)); err != nil {
 		return nil, err
@@ -998,7 +953,7 @@ func writeObjectFromReader(repoDir string, hashKind HashKind, header ObjectHeade
 	oidBytes := hasher.Sum(nil)
 	oidHex := hex.EncodeToString(oidBytes)
 
-	objDir := filepath.Join(repoDir, "objects", oidHex[:2])
+	objDir := filepath.Join(repo.repoDir, "objects", oidHex[:2])
 	objPath := filepath.Join(objDir, oidHex[2:])
 	if _, err := os.Stat(objPath); err == nil {
 		return oidBytes, nil
@@ -1034,11 +989,11 @@ func writeObjectFromReader(repoDir string, hashKind HashKind, header ObjectHeade
 // CopyFromPackIterator – writes pack objects as loose objects
 // ---------------------------------------------------------------------------
 
-func CopyFromPackIterator(repoDir string, hashKind HashKind, iter *PackIterator) error {
+func (repo *Repo) CopyFromPackIterator(iter *PackIterator) error {
 	offsetToOID := make(map[uint64][]byte)
 
 	for {
-		por, err := iter.Next(repoDir, hashKind, offsetToOID)
+		por, err := iter.Next(repo, offsetToOID)
 		if err != nil {
 			return err
 		}
@@ -1049,7 +1004,7 @@ func CopyFromPackIterator(repoDir string, hashKind HashKind, iter *PackIterator)
 		startPos := iter.StartPosition()
 		header := por.Header()
 
-		oidBytes, err := writeObjectFromReader(repoDir, hashKind, header, por)
+		oidBytes, err := repo.writeObjectFromReader(header, por)
 		por.Close()
 		if err != nil {
 			return err

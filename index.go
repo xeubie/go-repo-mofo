@@ -28,26 +28,27 @@ type IndexEntry struct {
 
 // Index represents a parsed git index file.
 type Index struct {
+	repo          *Repo
 	version       uint32
 	entries       map[string][4]*IndexEntry
 	dirToPaths    map[string]map[string]bool
 	dirToChildren map[string]map[string]bool
 	rootChildren  map[string]bool
-	hashKind      HashKind
 }
 
-// ReadIndex reads and parses the git index file.
-func ReadIndex(repoDir string, hashKind HashKind) (*Index, error) {
+// readIndex reads and parses the git index file.
+func (repo *Repo) readIndex() (*Index, error) {
+	hashKind := repo.opts.Hash
 	idx := &Index{
+		repo:          repo,
 		version:       2,
 		entries:       make(map[string][4]*IndexEntry),
 		dirToPaths:    make(map[string]map[string]bool),
 		dirToChildren: make(map[string]map[string]bool),
 		rootChildren:  make(map[string]bool),
-		hashKind:      hashKind,
 	}
 
-	indexPath := filepath.Join(repoDir, "index")
+	indexPath := filepath.Join(repo.repoDir, "index")
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -170,8 +171,9 @@ func (idx *Index) addEntry(entry *IndexEntry) {
 }
 
 // AddPath adds a file from the working directory to the index.
-func (idx *Index) AddPath(workDir, repoDir string, filePath string) error {
-	fullPath := filepath.Join(workDir, filePath)
+func (idx *Index) AddPath(filePath string) error {
+	repo := idx.repo
+	fullPath := filepath.Join(repo.workPath, filePath)
 
 	info, err := os.Lstat(fullPath)
 	if err != nil {
@@ -188,7 +190,7 @@ func (idx *Index) AddPath(workDir, repoDir string, filePath string) error {
 				continue
 			}
 			subPath := JoinPath([]string{filePath, e.Name()})
-			if err := idx.AddPath(workDir, repoDir, subPath); err != nil {
+			if err := idx.AddPath(subPath); err != nil {
 				return err
 			}
 		}
@@ -200,7 +202,7 @@ func (idx *Index) AddPath(workDir, repoDir string, filePath string) error {
 		if err != nil {
 			return err
 		}
-		oid, err := writeBlob(repoDir, idx.hashKind, []byte(target))
+		oid, err := repo.writeBlob([]byte(target))
 		if err != nil {
 			return err
 		}
@@ -221,7 +223,7 @@ func (idx *Index) AddPath(workDir, repoDir string, filePath string) error {
 		return err
 	}
 
-	oid, err := writeBlob(repoDir, idx.hashKind, content)
+	oid, err := repo.writeBlob(content)
 	if err != nil {
 		return err
 	}
@@ -271,8 +273,8 @@ func (idx *Index) Write(f *os.File) error {
 
 	// write header
 	buf.WriteString("DIRC")
-	binary.Write(&buf, binary.BigEndian, uint32(2))              // version
-	binary.Write(&buf, binary.BigEndian, uint32(len(sorted)))     // entry count
+	binary.Write(&buf, binary.BigEndian, uint32(2))          // version
+	binary.Write(&buf, binary.BigEndian, uint32(len(sorted))) // entry count
 
 	// write entries
 	for _, se := range sorted {

@@ -143,9 +143,9 @@ func ValidateRefName(name string) bool {
 	return true
 }
 
-// ReadRef reads a ref from the repo dir.
-func ReadRef(repoDir string, refPath string) (*RefOrOid, error) {
-	filePath := filepath.Join(repoDir, refPath)
+// readRef reads a ref from the repo dir.
+func (repo *Repo) readRef(refPath string) (*RefOrOid, error) {
+	filePath := filepath.Join(repo.repoDir, refPath)
 	data, err := os.ReadFile(filePath)
 	if err == nil {
 		content := strings.TrimRight(string(data), "\n\r")
@@ -157,7 +157,7 @@ func ReadRef(repoDir string, refPath string) (*RefOrOid, error) {
 	}
 
 	// look for packed refs
-	packedRefsPath := filepath.Join(repoDir, "packed-refs")
+	packedRefsPath := filepath.Join(repo.repoDir, "packed-refs")
 	packedData, err := os.ReadFile(packedRefsPath)
 	if err == nil {
 		lines := strings.Split(string(packedData), "\n")
@@ -178,15 +178,14 @@ func ReadRef(repoDir string, refPath string) (*RefOrOid, error) {
 	return nil, ErrRefNotFound
 }
 
-// ReadRefRecur recursively resolves a RefOrOid to an OID hex string.
-// Returns "" if the ref chain ends without an OID.
-func ReadRefRecur(repoDir string, input RefOrOid) (string, error) {
+// readRefRecur recursively resolves a RefOrOid to an OID hex string.
+func (repo *Repo) readRefRecur(input RefOrOid) (string, error) {
 	if !input.IsRef {
 		return input.OID, nil
 	}
 
 	refPath := input.Ref.ToPath()
-	result, err := ReadRef(repoDir, refPath)
+	result, err := repo.readRef(refPath)
 	if err != nil {
 		if errors.Is(err, ErrRefNotFound) {
 			return "", nil
@@ -196,13 +195,13 @@ func ReadRefRecur(repoDir string, input RefOrOid) (string, error) {
 	if result == nil {
 		return "", nil
 	}
-	return ReadRefRecur(repoDir, *result)
+	return repo.readRefRecur(*result)
 }
 
 // ReadHeadRecurMaybe reads HEAD and recursively resolves it.
-// Returns "" if HEAD doesn't resolve to an OID (e.g. new repo with no commits).
-func ReadHeadRecurMaybe(repoDir string) (string, error) {
-	result, err := ReadRef(repoDir, "HEAD")
+// Returns "" if HEAD doesn't resolve to an OID.
+func (repo *Repo) ReadHeadRecurMaybe() (string, error) {
+	result, err := repo.readRef("HEAD")
 	if err != nil {
 		if errors.Is(err, ErrRefNotFound) {
 			return "", nil
@@ -212,13 +211,13 @@ func ReadHeadRecurMaybe(repoDir string) (string, error) {
 	if result == nil {
 		return "", nil
 	}
-	return ReadRefRecur(repoDir, *result)
+	return repo.readRefRecur(*result)
 }
 
 // ReadHeadRecur reads HEAD and recursively resolves it.
 // Returns error if HEAD doesn't resolve to an OID.
-func ReadHeadRecur(repoDir string) (string, error) {
-	oid, err := ReadHeadRecurMaybe(repoDir)
+func (repo *Repo) ReadHeadRecur() (string, error) {
+	oid, err := repo.ReadHeadRecurMaybe()
 	if err != nil {
 		return "", err
 	}
@@ -228,9 +227,22 @@ func ReadHeadRecur(repoDir string) (string, error) {
 	return oid, nil
 }
 
-// WriteRef writes a ref (OID or symbolic ref) to the repo.
-func WriteRef(repoDir string, refPath string, refOrOid RefOrOid) error {
-	fullPath := filepath.Join(repoDir, refPath)
+// ReadRef reads a ref by kind+name and recursively resolves it.
+func (repo *Repo) ReadRef(ref Ref) (string, error) {
+	refPath := ref.ToPath()
+	result, err := repo.readRef(refPath)
+	if err != nil {
+		return "", err
+	}
+	if result == nil {
+		return "", nil
+	}
+	return repo.readRefRecur(*result)
+}
+
+// writeRef writes a ref (OID or symbolic ref) to the repo.
+func (repo *Repo) writeRef(refPath string, refOrOid RefOrOid) error {
+	fullPath := filepath.Join(repo.repoDir, refPath)
 	parentDir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return err
@@ -243,7 +255,7 @@ func WriteRef(repoDir string, refPath string, refOrOid RefOrOid) error {
 		content = refOrOid.OID
 	}
 
-	lock, err := NewLockFile(repoDir, refPath)
+	lock, err := NewLockFile(repo.repoDir, refPath)
 	if err != nil {
 		return err
 	}
@@ -256,39 +268,39 @@ func WriteRef(repoDir string, refPath string, refOrOid RefOrOid) error {
 	return nil
 }
 
-// WriteRefRecur recursively follows symbolic refs and writes the OID.
-func WriteRefRecur(repoDir string, refPath string, oidHex string) error {
-	result, err := ReadRef(repoDir, refPath)
+// writeRefRecur recursively follows symbolic refs and writes the OID.
+func (repo *Repo) writeRefRecur(refPath string, oidHex string) error {
+	result, err := repo.readRef(refPath)
 	if err != nil {
 		if errors.Is(err, ErrRefNotFound) {
-			return WriteRef(repoDir, refPath, RefOrOid{OID: oidHex})
+			return repo.writeRef(refPath, RefOrOid{OID: oidHex})
 		}
 		return err
 	}
 	if result == nil {
-		return WriteRef(repoDir, refPath, RefOrOid{OID: oidHex})
+		return repo.writeRef(refPath, RefOrOid{OID: oidHex})
 	}
 	if result.IsRef {
 		nextRefPath := result.Ref.ToPath()
-		return WriteRefRecur(repoDir, nextRefPath, oidHex)
+		return repo.writeRefRecur(nextRefPath, oidHex)
 	}
-	return WriteRef(repoDir, refPath, RefOrOid{OID: oidHex})
+	return repo.writeRef(refPath, RefOrOid{OID: oidHex})
 }
 
-// ReplaceHead writes a ref or OID to HEAD.
-func ReplaceHead(repoDir string, refOrOid RefOrOid) error {
-	return WriteRef(repoDir, "HEAD", refOrOid)
+// replaceHead writes a ref or OID to HEAD.
+func (repo *Repo) replaceHead(refOrOid RefOrOid) error {
+	return repo.writeRef("HEAD", refOrOid)
 }
 
-// UpdateHead writes an OID to HEAD (following symbolic refs).
-func UpdateHead(repoDir string, oidHex string) error {
-	return WriteRefRecur(repoDir, "HEAD", oidHex)
+// updateHead writes an OID to HEAD (following symbolic refs).
+func (repo *Repo) updateHead(oidHex string) error {
+	return repo.writeRefRecur("HEAD", oidHex)
 }
 
-// RefExists checks whether a ref exists.
-func RefExists(repoDir string, ref Ref) (bool, error) {
+// refExists checks whether a ref exists.
+func (repo *Repo) refExists(ref Ref) (bool, error) {
 	refPath := ref.ToPath()
-	_, err := ReadRef(repoDir, refPath)
+	_, err := repo.readRef(refPath)
 	if err != nil {
 		if errors.Is(err, ErrRefNotFound) {
 			return false, nil

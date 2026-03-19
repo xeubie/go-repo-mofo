@@ -55,12 +55,12 @@ func InitRepo(workPath string, opts RepoOpts) (*Repo, error) {
 	}
 
 	// create default branch "master"
-	if err := AddBranch(gitDir, opts, AddBranchInput{Name: "master"}); err != nil {
+	if err := repo.addBranch(AddBranchInput{Name: "master"}); err != nil {
 		return nil, err
 	}
 
 	// set HEAD to point to refs/heads/master
-	if err := ReplaceHead(gitDir, RefOrOid{
+	if err := repo.replaceHead(RefOrOid{
 		IsRef: true,
 		Ref:   Ref{Kind: RefHead, Name: "master"},
 	}); err != nil {
@@ -82,24 +82,8 @@ func (r *Repo) Close() error {
 	return nil
 }
 
-func (r *Repo) RepoDir() string  { return r.repoDir }
-func (r *Repo) WorkPath() string { return r.workPath }
-func (r *Repo) Opts() RepoOpts   { return r.opts }
-
-func (r *Repo) ReadRef(ref Ref) (string, error) {
-	refPath := ref.ToPath()
-	result, err := ReadRef(r.repoDir, refPath)
-	if err != nil {
-		return "", err
-	}
-	if result == nil {
-		return "", nil
-	}
-	return ReadRefRecur(r.repoDir, *result)
-}
-
 func (r *Repo) AddConfig(input AddConfigInput) error {
-	config, err := LoadConfig(r.repoDir)
+	config, err := r.loadConfig()
 	if err != nil {
 		return err
 	}
@@ -123,13 +107,13 @@ func (r *Repo) AddConfig(input AddConfigInput) error {
 }
 
 func (r *Repo) Add(paths []string) error {
-	return AddPaths(r.workPath, r.repoDir, r.opts, paths)
+	return r.addPaths(paths)
 }
 
 func (r *Repo) Commit(metadata CommitMetadata) (string, error) {
-	return WriteCommit(r.repoDir, r.workPath, r.opts, metadata)
+	return r.writeCommit(metadata)
 }
 
 func (r *Repo) AddTag(input AddTagInput) (string, error) {
-	return AddTag(r.repoDir, r.workPath, r.opts, input)
+	return r.addTag(input)
 }

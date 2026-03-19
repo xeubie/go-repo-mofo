@@ -28,8 +28,8 @@ type Config struct {
 	sections []configSection
 }
 
-func LoadConfig(repoDir string) (*Config, error) {
-	configPath := filepath.Join(repoDir, "config")
+func (repo *Repo) loadConfig() (*Config, error) {
+	configPath := filepath.Join(repo.repoDir, "config")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {

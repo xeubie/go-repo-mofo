@@ -502,7 +502,7 @@ func initPackObjectReaderAtPosition(pr *PackReader, position uint64) (*PackObjec
 }
 
 // initDelta reads delta instructions from the zlib stream and sets up the base reader.
-func (por *PackObjectReader) initDelta(repoDir string, hashKind HashKind) error {
+func (por *PackObjectReader) initDelta(repo *Repo) error {
 	var baseReader *LooseOrPackObjectReader
 
 	if por.deltaIsOfs {
@@ -517,7 +517,7 @@ func (por *PackObjectReader) initDelta(repoDir string, hashKind HashKind) error 
 		}
 		baseReader = &LooseOrPackObjectReader{isLoose: false, pack: basePack}
 	} else {
-		lr, err := NewLooseOrPackObjectReader(repoDir, hashKind, por.deltaRefOIDHex)
+		lr, err := newLooseOrPackObjectReader(repo, por.deltaRefOIDHex)
 		if err != nil {
 			return err
 		}
@@ -646,11 +646,11 @@ func (por *PackObjectReader) initDelta(repoDir string, hashKind HashKind) error 
 
 // initDeltaAndCache initialises the full delta chain iteratively (not recursively)
 // to avoid stack overflow on deep chains, then caches base data.
-func (por *PackObjectReader) initDeltaAndCache(repoDir string, hashKind HashKind) error {
+func (por *PackObjectReader) initDeltaAndCache(repo *Repo) error {
 	var deltaObjects []*PackObjectReader
 	last := por
 	for !last.isBasic {
-		if err := last.initDelta(repoDir, hashKind); err != nil {
+		if err := last.initDelta(repo); err != nil {
 			return err
 		}
 		deltaObjects = append(deltaObjects, last)
@@ -909,8 +909,8 @@ type looseObjectReader struct {
 	header     ObjectHeader
 }
 
-func openLooseObject(repoDir string, oidHex string) (*looseObjectReader, error) {
-	objPath := filepath.Join(repoDir, "objects", oidHex[:2], oidHex[2:])
+func openLooseObject(repo *Repo, oidHex string) (*looseObjectReader, error) {
+	objPath := filepath.Join(repo.repoDir, "objects", oidHex[:2], oidHex[2:])
 	f, err := os.Open(objPath)
 	if err != nil {
 		return nil, err
@@ -974,15 +974,15 @@ type LooseOrPackObjectReader struct {
 	pack    *PackObjectReader
 }
 
-func NewLooseOrPackObjectReader(repoDir string, hashKind HashKind, oidHex string) (*LooseOrPackObjectReader, error) {
-	loose, err := openLooseObject(repoDir, oidHex)
+func newLooseOrPackObjectReader(repo *Repo, oidHex string) (*LooseOrPackObjectReader, error) {
+	loose, err := openLooseObject(repo, oidHex)
 	if err == nil {
 		return &LooseOrPackObjectReader{isLoose: true, loose: loose}, nil
 	}
 	if !os.IsNotExist(err) {
 		return nil, err
 	}
-	pack, err := newPackObjectReaderFromIndex(repoDir, hashKind, oidHex)
+	pack, err := newPackObjectReaderFromIndex(repo, oidHex)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,7 +1091,7 @@ func (it *PackIterator) StartPosition() uint64 {
 // Next returns the next pack object, or nil when done.
 // The caller must call Close() on the returned reader before calling Next again.
 // offsetToOID maps pack file offsets to OID bytes, enabling ofs_delta→ref_delta conversion.
-func (it *PackIterator) Next(repoDir string, hashKind HashKind, offsetToOID map[uint64][]byte) (*PackObjectReader, error) {
+func (it *PackIterator) Next(repo *Repo, offsetToOID map[uint64][]byte) (*PackObjectReader, error) {
 	if it.objectIndex >= it.objectCount {
 		return nil, nil
 	}
@@ -1121,7 +1121,7 @@ func (it *PackIterator) Next(repoDir string, hashKind HashKind, offsetToOID map[
 				}
 			}
 		}
-		if err := por.initDeltaAndCache(repoDir, hashKind); err != nil {
+		if err := por.initDeltaAndCache(repo); err != nil {
 			por.Close()
 			return nil, err
 		}
@@ -1157,7 +1157,8 @@ type PackWriter struct {
 	readerDone bool
 }
 
-func NewPackWriter(hashKind HashKind, iter *ObjectIterator) (*PackWriter, error) {
+func (repo *Repo) NewPackWriter(iter *ObjectIterator) (*PackWriter, error) {
+	hashKind := repo.opts.Hash
 	var objects []packWriterObj
 	for {
 		obj, err := iter.Next()
@@ -1319,9 +1320,9 @@ func (pw *PackWriter) writeObjectHeader() {
 // Pack index search
 // ---------------------------------------------------------------------------
 
-func newPackObjectReaderFromIndex(repoDir string, hashKind HashKind, oidHex string) (*PackObjectReader, error) {
-	packDir := filepath.Join(repoDir, "objects", "pack")
-	offset, packID, err := searchPackIndexes(hashKind, packDir, oidHex)
+func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader, error) {
+	packDir := filepath.Join(repo.repoDir, "objects", "pack")
+	offset, packID, err := searchPackIndexes(repo.opts.Hash, packDir, oidHex)
 	if err != nil {
 		return nil, err
 	}
@@ -1356,7 +1357,7 @@ func newPackObjectReaderFromIndex(repoDir string, hashKind HashKind, oidHex stri
 	if err != nil {
 		return nil, err
 	}
-	if err := por.initDeltaAndCache(repoDir, hashKind); err != nil {
+	if err := por.initDeltaAndCache(repo); err != nil {
 		por.Close()
 		return nil, err
 	}

@@ -66,16 +66,16 @@ func TestCreateAndReadPack(t *testing.T) {
 	}
 
 	// write a pack file using PackWriter
-	headOID, err := ReadHeadRecur(repo.repoDir)
+	headOID, err := repo.ReadHeadRecur()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	objIter := NewObjectIterator(repo.repoDir, opts.Hash, ObjectIteratorOptions{Kind: ObjectIterAll})
+	objIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll})
 	defer objIter.Close()
 	objIter.Include(headOID)
 
-	packWriter, err := NewPackWriter(opts.Hash, objIter)
+	packWriter, err := repo.NewPackWriter(objIter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestCreateAndReadPack(t *testing.T) {
 
 		found := false
 		for {
-			por, err := iter.Next(repo.repoDir, opts.Hash, nil)
+			por, err := iter.Next(repo, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestCreateAndReadPack(t *testing.T) {
 					pr2.Close()
 					t.Fatal(err)
 				}
-				msg := findCommitMessage(t, iter2, repo.repoDir, opts, tc.oid)
+				msg := findCommitMessage(t, iter2, repo, tc.oid)
 				pr2.Close()
 				if msg != tc.message {
 					t.Fatalf("expected message %q, got %q", tc.message, msg)
@@ -177,10 +177,10 @@ func hashPackObject(hashKind HashKind, header ObjectHeader, r io.Reader) string 
 }
 
 // findCommitMessage iterates a pack to find a commit by OID and returns its message.
-func findCommitMessage(t *testing.T, iter *PackIterator, repoDir string, opts RepoOpts, targetOID string) string {
+func findCommitMessage(t *testing.T, iter *PackIterator, repo *Repo, targetOID string) string {
 	t.Helper()
 	for {
-		por, err := iter.Next(repoDir, opts.Hash, nil)
+		por, err := iter.Next(repo, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +202,7 @@ func findCommitMessage(t *testing.T, iter *PackIterator, repoDir string, opts Re
 		}
 
 		headerStr := fmt.Sprintf("commit %d\x00", header.Size)
-		hasher := opts.Hash.NewHasher()
+		hasher := repo.opts.Hash.NewHasher()
 		hasher.Write([]byte(headerStr))
 		hasher.Write(content)
 		computedOID := hex.EncodeToString(hasher.Sum(nil))
@@ -297,11 +297,11 @@ func TestWritePackFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	objIter := NewObjectIterator(clientRepo.repoDir, opts.Hash, ObjectIteratorOptions{Kind: ObjectIterAll})
+	objIter := clientRepo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll})
 	defer objIter.Close()
 	objIter.Include(commit2)
 
-	pw, err := NewPackWriter(opts.Hash, objIter)
+	pw, err := clientRepo.NewPackWriter(objIter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestWritePackFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CopyFromPackIterator(serverRepo.repoDir, opts.Hash, packIter); err != nil {
+	if err := serverRepo.CopyFromPackIterator(packIter); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -384,7 +384,7 @@ func TestIteratePackFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CopyFromPackIterator(repo.repoDir, opts.Hash, packIter); err != nil {
+	if err := repo.CopyFromPackIterator(packIter); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -428,7 +428,7 @@ func TestIteratePackFromStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CopyFromPackIterator(repo.repoDir, opts.Hash, packIter); err != nil {
+	if err := repo.CopyFromPackIterator(packIter); err != nil {
 		t.Fatal(err)
 	}
 }
