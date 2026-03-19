@@ -1,7 +1,6 @@
 package repodojo
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +19,7 @@ type Repo struct {
 
 func InitRepo(workPath string, opts RepoOpts) (*Repo, error) {
 	if !filepath.IsAbs(workPath) {
-		return nil, errors.New("path must be absolute")
+		return nil, fmt.Errorf("path must be absolute")
 	}
 
 	// create work directory
@@ -32,7 +31,7 @@ func InitRepo(workPath string, opts RepoOpts) (*Repo, error) {
 
 	// check if repo already exists
 	if _, err := os.Stat(gitDir); err == nil {
-		return nil, errors.New("repo already exists")
+		return nil, ErrRepoAlreadyExists
 	}
 
 	// create .git directory structure
