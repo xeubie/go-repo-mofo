@@ -256,7 +256,13 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 			return repo.RemoveBranch(RemoveBranchInput{Name: cmd.Branch.Name})
 		}
 
-	case CommandSwitch:
+	case CommandSwitchDir, CommandReset, CommandResetDir:
+		kind := SwitchKindSwitch
+		if cmd.Kind != CommandSwitchDir {
+			kind = SwitchKindReset
+		}
+		updateWorkDir := cmd.Kind != CommandReset
+
 		repo, err := OpenRepo(cwdPath, opts)
 		if err != nil {
 			return ErrRepoNotFound
@@ -264,9 +270,9 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		defer repo.Close()
 
 		result, err := repo.Switch(SwitchInput{
-			Kind:          SwitchKindSwitch,
+			Kind:          kind,
 			Target:        cmd.Switch.Target,
-			UpdateWorkDir: true,
+			UpdateWorkDir: updateWorkDir,
 			Force:         cmd.Switch.Force,
 		})
 		if err != nil {
@@ -290,6 +296,14 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 			return ErrHandled
 		}
 		return nil
+
+	case CommandResetAdd:
+		repo, err := OpenRepo(cwdPath, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		defer repo.Close()
+		return repo.ResetAdd(cmd.ResetAdd.Target)
 	}
 	return fmt.Errorf("unknown command")
 }

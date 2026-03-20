@@ -18,7 +18,10 @@ const (
 	CommandTag
 	CommandStatus
 	CommandBranch
-	CommandSwitch
+	CommandSwitchDir
+	CommandReset
+	CommandResetDir
+	CommandResetAdd
 )
 
 var commandNames = map[CommandKind]string{
@@ -31,7 +34,10 @@ var commandNames = map[CommandKind]string{
 	CommandTag:     "tag",
 	CommandStatus:  "status",
 	CommandBranch:  "branch",
-	CommandSwitch:  "switch",
+	CommandSwitchDir:   "switch",
+	CommandReset:    "reset",
+	CommandResetDir: "reset-dir",
+	CommandResetAdd: "reset-add",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -44,7 +50,10 @@ var commandDescrips = map[CommandKind]string{
 	CommandTag:     "add, remove, and list tags.",
 	CommandStatus:  "show the status of uncommitted changes.",
 	CommandBranch:  "add, remove, and list branches.",
-	CommandSwitch:  "switch to a branch or commit id.",
+	CommandSwitchDir:   "switch to a branch or commit id.",
+	CommandReset:    "make the current branch point to a new commit id.\nupdates the index, but the files in the work dir are left alone.",
+	CommandResetDir: "make the current branch point to a new commit id.\nupdates both the index and the work dir.\nsimilar to `git reset --hard`.",
+	CommandResetAdd: "make the current branch point to a new commit id.\ndoes not update the index or the work dir.\nsimilar to `git reset --soft`.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -73,10 +82,20 @@ remove branch:
     repodojo branch rm mybranch
 list branches:
     repodojo branch list`,
-	CommandSwitch: `switch to branch:
+	CommandSwitchDir: `switch to branch:
     repodojo switch mybranch
 switch to commit id:
     repodojo switch a1b2c3...`,
+	CommandReset: `reset current branch to match another branch:
+    repodojo reset mybranch
+reset current branch to point to a new commit id:
+    repodojo reset a1b2c3...`,
+	CommandResetDir: `reset current branch to match another branch:
+    repodojo reset-dir mybranch
+reset current branch to point to a new commit id:
+    repodojo reset-dir a1b2c3...`,
+	CommandResetAdd: `reset current branch to point to a new commit id:
+    repodojo reset-add a1b2c3...`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -238,6 +257,10 @@ type SwitchCommand struct {
 	Force  bool
 }
 
+type ResetAddCommand struct {
+	Target RefOrOid // OID only
+}
+
 type Command struct {
 	Kind    CommandKind
 	Init    *InitCommand
@@ -248,7 +271,8 @@ type Command struct {
 	Commit  *CommitCommand
 	Tag     *TagCommand
 	Branch  *BranchCommand
-	Switch  *SwitchCommand
+	Switch   *SwitchCommand
+	ResetAdd *ResetAddCommand
 }
 
 func parseCommand(cmdArgs *CommandArgs) *Command {
@@ -383,7 +407,7 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 		}
 		return nil
 
-	case CommandSwitch:
+	case CommandSwitchDir:
 		if len(cmdArgs.PositionalArgs) != 1 {
 			return nil
 		}
@@ -391,9 +415,51 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 		if target == nil {
 			return nil
 		}
-		return &Command{Kind: CommandSwitch, Switch: &SwitchCommand{
+		return &Command{Kind: CommandSwitchDir, Switch: &SwitchCommand{
 			Target: *target,
 			Force:  cmdArgs.Contains("-f"),
+		}}
+
+	case CommandReset:
+		if len(cmdArgs.PositionalArgs) != 1 {
+			return nil
+		}
+		target := RefOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		if target == nil {
+			return nil
+		}
+		return &Command{Kind: CommandReset, Switch: &SwitchCommand{
+			Target: *target,
+			Force:  cmdArgs.Contains("-f"),
+		}}
+
+	case CommandResetDir:
+		if len(cmdArgs.PositionalArgs) != 1 {
+			return nil
+		}
+		target := RefOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		if target == nil {
+			return nil
+		}
+		return &Command{Kind: CommandResetDir, Switch: &SwitchCommand{
+			Target: *target,
+			Force:  cmdArgs.Contains("-f"),
+		}}
+
+	case CommandResetAdd:
+		if len(cmdArgs.PositionalArgs) != 1 {
+			return nil
+		}
+		target := RefOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		if target == nil {
+			return nil
+		}
+		// reset-add only accepts OIDs
+		if target.IsRef {
+			return nil
+		}
+		return &Command{Kind: CommandResetAdd, ResetAdd: &ResetAddCommand{
+			Target: *target,
 		}}
 	}
 	return nil
@@ -486,7 +552,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repodojo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandSwitch; kind++ {
+		for kind := CommandInit; kind <= CommandResetAdd; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}
