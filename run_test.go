@@ -281,6 +281,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// verify second commit
+	var commit2 string
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -288,7 +289,7 @@ func TestRun(t *testing.T) {
 		}
 		defer repo.Close()
 
-		commit2, err := repo.ReadHeadRecurMaybe()
+		commit2, err = repo.ReadHeadRecurMaybe()
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
@@ -967,6 +968,112 @@ func TestRun(t *testing.T) {
 			if len(st.IndexDeleted) != 0 {
 				t.Fatalf("index_deleted count = %d, want 0: %v", len(st.IndexDeleted), st.IndexDeleted)
 			}
+		}
+	}
+
+	// parse objects
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		defer repo.Close()
+
+		// read commit
+		commitObj, err := repo.NewObject(commit2, true)
+		if err != nil {
+			t.Fatalf("read commit2 object failed: %v", err)
+		}
+		if commitObj.Commit.Message != "second commit" {
+			t.Fatalf("commit2 message = %q, want %q", commitObj.Commit.Message, "second commit")
+		}
+
+		// read tree
+		treeObj, err := repo.NewObject(commitObj.Commit.Tree, true)
+		commitObj.Close()
+		if err != nil {
+			t.Fatalf("read tree object failed: %v", err)
+		}
+		defer treeObj.Close()
+
+		if len(treeObj.Tree.Entries) != 7 {
+			t.Fatalf("tree entry count = %d, want 7", len(treeObj.Tree.Entries))
+		}
+	}
+
+	// remove dir from index
+	{
+		// make a nested dir with a few files
+		if err := os.MkdirAll(filepath.Join(workPath, "foo", "bar", "baz"), 0755); err != nil {
+			t.Fatalf("mkdir foo/bar/baz failed: %v", err)
+		}
+		writeFile(t, filepath.Join(workPath, "foo", "bar"), "hi.txt", "hi hi")
+		writeFile(t, filepath.Join(workPath, "foo", "bar", "baz"), "bye.txt", "bye bye")
+
+		// can't remove unindexed file
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Remove([]string{"foo/bar/hi.txt"}, RemoveOptions{UpdateWorkDir: true})
+			repo.Close()
+			if err != ErrRemoveIndexPathNotFound {
+				t.Fatalf("expected ErrRemoveIndexPathNotFound, got %v", err)
+			}
+		}
+
+		// add dir
+		err = Run(opts, []string{"add", "foo"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add foo failed: %v", err)
+		}
+
+		// make a commit
+		err = Run(opts, []string{"commit", "-m", "third commit"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("third commit failed: %v", err)
+		}
+
+		// untrack hi.txt
+		err = Run(opts, []string{"untrack", "foo/bar/hi.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("untrack foo/bar/hi.txt failed: %v", err)
+		}
+
+		// can't remove subdir without -r
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Remove([]string{"foo"}, RemoveOptions{UpdateWorkDir: true})
+			repo.Close()
+			if err != ErrRecursiveOptionRequired {
+				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
+			}
+		}
+
+		// remove subdir with -r
+		err = Run(opts, []string{"rm", "-r", "foo"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("rm -r foo failed: %v", err)
+		}
+
+		// make sure baz dir was deleted
+		if _, err := os.Stat(filepath.Join(workPath, "foo", "bar", "baz")); !os.IsNotExist(err) {
+			t.Fatal("foo/bar/baz should not exist after rm -r foo")
+		}
+
+		// but hi.txt was not deleted, because it wasn't in the index
+		if _, err := os.Stat(filepath.Join(workPath, "foo", "bar", "hi.txt")); err != nil {
+			t.Fatalf("foo/bar/hi.txt should still exist: %v", err)
+		}
+
+		// add hi.txt back to the index
+		err = Run(opts, []string{"add", "foo/bar/hi.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add foo/bar/hi.txt failed: %v", err)
 		}
 	}
 }

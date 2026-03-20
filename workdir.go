@@ -303,14 +303,10 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 		parts := SplitPath(p)
 		indexPath := JoinPath(parts)
 
-		// check if path exists in index or on disk
+		// check if path exists in index
 		_, inEntries := idx.entries[indexPath]
 		inDir := idx.IsDir(indexPath)
-		fullPath := filepath.Join(repo.workPath, indexPath)
-		_, statErr := os.Lstat(fullPath)
-		existsOnDisk := statErr == nil
-
-		if !inEntries && !inDir && !existsOnDisk {
+		if !inEntries && !inDir {
 			return ErrRemoveIndexPathNotFound
 		}
 
