@@ -23,10 +23,123 @@ var (
 )
 
 // ---------------------------------------------------------------------------
+// PackReader
+// ---------------------------------------------------------------------------
+
+// PackReader reads pack data from either a seekable file or a sequential stream.
+type PackReader interface {
+	io.Reader
+	ReadByte() (byte, error)
+	SeekTo(pos uint64) error
+	LogicalPos() uint64
+	Dupe() (PackReader, error)
+	Close()
+	IsFile() bool
+}
+
+func readPackUint32BE(pr PackReader) (uint32, error) {
+	var buf [4]byte
+	if _, err := io.ReadFull(pr, buf[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(buf[:]), nil
+}
+
+// FilePackReader reads pack data from a seekable file.
+type FilePackReader struct {
+	filePath string
+	file     *os.File
+	br       *bufio.Reader
+}
+
+func NewFilePackReader(path string, bufSize int) (*FilePackReader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &FilePackReader{
+		filePath: path,
+		file:     f,
+		br:       bufio.NewReaderSize(f, bufSize),
+	}, nil
+}
+
+func (pr *FilePackReader) Close() {
+	if pr.file != nil {
+		pr.file.Close()
+	}
+}
+
+func (pr *FilePackReader) Read(p []byte) (int, error) {
+	return pr.br.Read(p)
+}
+
+func (pr *FilePackReader) ReadByte() (byte, error) {
+	return pr.br.ReadByte()
+}
+
+func (pr *FilePackReader) SeekTo(pos uint64) error {
+	_, err := pr.file.Seek(int64(pos), io.SeekStart)
+	if err != nil {
+		return err
+	}
+	pr.br.Reset(pr.file)
+	return nil
+}
+
+func (pr *FilePackReader) LogicalPos() uint64 {
+	filePos, _ := pr.file.Seek(0, io.SeekCurrent)
+	return uint64(filePos) - uint64(pr.br.Buffered())
+}
+
+func (pr *FilePackReader) Dupe() (PackReader, error) {
+	return NewFilePackReader(pr.filePath, pr.br.Size())
+}
+
+func (pr *FilePackReader) IsFile() bool { return true }
+
+// StreamPackReader reads pack data from a sequential stream.
+type StreamPackReader struct {
+	counting *CountingReader
+}
+
+func NewStreamPackReader(r io.Reader, bufSize int) *StreamPackReader {
+	br := bufio.NewReaderSize(r, bufSize)
+	return &StreamPackReader{counting: NewCountingReader(br)}
+}
+
+func (pr *StreamPackReader) Close() {}
+
+func (pr *StreamPackReader) Read(p []byte) (int, error) {
+	return pr.counting.Read(p)
+}
+
+func (pr *StreamPackReader) ReadByte() (byte, error) {
+	return pr.counting.ReadByte()
+}
+
+func (pr *StreamPackReader) SeekTo(pos uint64) error {
+	if pos != pr.counting.LogicalPos() {
+		return fmt.Errorf("stream PackReader cannot seek to %d (at %d)", pos, pr.counting.LogicalPos())
+	}
+	return nil
+}
+
+func (pr *StreamPackReader) LogicalPos() uint64 {
+	return pr.counting.LogicalPos()
+}
+
+func (pr *StreamPackReader) Dupe() (PackReader, error) {
+	return pr, nil
+}
+
+func (pr *StreamPackReader) IsFile() bool { return false }
+
+// ---------------------------------------------------------------------------
 // CountingReader
 // ---------------------------------------------------------------------------
 
-// CountingReader wraps an io.Reader and tracks the number of logical bytes
+// CountingReader wraps a *bufio.Reader and tracks the number of logical bytes
 // consumed. It implements io.ByteReader so that compress/flate will not wrap
 // it in an extra bufio.Reader.
 type CountingReader struct {
@@ -34,8 +147,8 @@ type CountingReader struct {
 	pos uint64
 }
 
-func NewCountingReader(r io.Reader) *CountingReader {
-	return &CountingReader{br: bufio.NewReaderSize(r, 4096)}
+func NewCountingReader(br *bufio.Reader) *CountingReader {
+	return &CountingReader{br: br}
 }
 
 func (cr *CountingReader) Read(p []byte) (int, error) {
@@ -58,100 +171,11 @@ func (cr *CountingReader) LogicalPos() uint64 {
 }
 
 // ---------------------------------------------------------------------------
-// PackReader
-// ---------------------------------------------------------------------------
-
-// PackReader reads pack data from either a seekable file or a sequential
-// stream (via a CountingReader).
-type PackReader struct {
-	isFile   bool
-	filePath string
-	file     *os.File
-	br       *bufio.Reader   // file mode only
-	counting *CountingReader // stream mode only
-}
-
-func NewPackReaderFromFile(path string) (*PackReader, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	return &PackReader{
-		isFile:   true,
-		filePath: path,
-		file:     f,
-		br:       bufio.NewReaderSize(f, 4096),
-	}, nil
-}
-
-func NewPackReaderFromStream(cr *CountingReader) *PackReader {
-	return &PackReader{isFile: false, counting: cr}
-}
-
-func (pr *PackReader) Close() {
-	if pr.isFile && pr.file != nil {
-		pr.file.Close()
-	}
-}
-
-func (pr *PackReader) Read(p []byte) (int, error) {
-	if pr.isFile {
-		return pr.br.Read(p)
-	}
-	return pr.counting.Read(p)
-}
-
-func (pr *PackReader) ReadByte() (byte, error) {
-	if pr.isFile {
-		return pr.br.ReadByte()
-	}
-	return pr.counting.ReadByte()
-}
-
-func (pr *PackReader) SeekTo(pos uint64) error {
-	if pr.isFile {
-		_, err := pr.file.Seek(int64(pos), io.SeekStart)
-		if err != nil {
-			return err
-		}
-		pr.br.Reset(pr.file)
-		return nil
-	}
-	if pos != pr.counting.LogicalPos() {
-		return fmt.Errorf("stream PackReader cannot seek to %d (at %d)", pos, pr.counting.LogicalPos())
-	}
-	return nil
-}
-
-func (pr *PackReader) LogicalPos() uint64 {
-	if pr.isFile {
-		filePos, _ := pr.file.Seek(0, io.SeekCurrent)
-		return uint64(filePos) - uint64(pr.br.Buffered())
-	}
-	return pr.counting.LogicalPos()
-}
-
-func (pr *PackReader) Dupe() (*PackReader, error) {
-	if pr.isFile {
-		return NewPackReaderFromFile(pr.filePath)
-	}
-	return NewPackReaderFromStream(pr.counting), nil
-}
-
-func (pr *PackReader) readUint32BE() (uint32, error) {
-	var buf [4]byte
-	if _, err := io.ReadFull(pr, buf[:]); err != nil {
-		return 0, err
-	}
-	return binary.BigEndian.Uint32(buf[:]), nil
-}
-
-// ---------------------------------------------------------------------------
 // packObjectStream – zlib decompression for a single pack object
 // ---------------------------------------------------------------------------
 
 type packObjectStream struct {
-	packReader *PackReader // dup'd (owned) for file mode; shared ref for stream
+	packReader PackReader
 	ownsReader bool
 	startPos   uint64
 	endPos     uint64
@@ -166,12 +190,12 @@ type packObjectStream struct {
 	isMem    bool
 }
 
-func newPackObjectStream(orig *PackReader, startPos uint64) (*packObjectStream, error) {
+func newPackObjectStream(orig PackReader, startPos uint64) (*packObjectStream, error) {
 	pr, err := orig.Dupe()
 	if err != nil {
 		return nil, err
 	}
-	owns := pr.isFile
+	owns := pr.IsFile()
 
 	if err := pr.SeekTo(startPos); err != nil {
 		if owns {
@@ -268,7 +292,7 @@ func (s *packObjectStream) getEndPos() (uint64, error) {
 }
 
 func (s *packObjectStream) readIntoMemoryMaybe(objectSize uint64) error {
-	if s.isMem || !s.packReader.isFile {
+	if s.isMem || !s.packReader.IsFile() {
 		return nil
 	}
 	const maxBuf = 50_000_000
@@ -402,7 +426,7 @@ func objectKindToPackObjectKind(k ObjectKind) packObjectKind {
 	return packBlob
 }
 
-func initPackObjectReaderAtPosition(pr *PackReader, position uint64) (*PackObjectReader, error) {
+func initPackObjectReaderAtPosition(pr PackReader, position uint64) (*PackObjectReader, error) {
 	if err := pr.SeekTo(position); err != nil {
 		return nil, err
 	}
@@ -565,7 +589,7 @@ func (por *PackObjectReader) initDelta(repo *Repo) error {
 	var chunks []deltaChunk
 	var chunkData [][]byte
 
-	isStream := !por.stream.packReader.isFile
+	isStream := !por.stream.packReader.IsFile()
 
 	for bytesRead < por.size {
 		instrByte, err := por.stream.readByte()
@@ -1050,14 +1074,14 @@ func (r *LooseOrPackObjectReader) Position() uint64 {
 // ---------------------------------------------------------------------------
 
 type PackIterator struct {
-	packReader  *PackReader
+	packReader  PackReader
 	startPos    uint64
 	objectCount uint32
 	objectIndex uint32
 	currentObj  *PackObjectReader
 }
 
-func NewPackIterator(pr *PackReader) (*PackIterator, error) {
+func NewPackIterator(pr PackReader) (*PackIterator, error) {
 	var sig [4]byte
 	if _, err := io.ReadFull(pr, sig[:]); err != nil {
 		return nil, err
@@ -1065,14 +1089,14 @@ func NewPackIterator(pr *PackReader) (*PackIterator, error) {
 	if string(sig[:]) != "PACK" {
 		return nil, ErrInvalidPackSig
 	}
-	version, err := pr.readUint32BE()
+	version, err := readPackUint32BE(pr)
 	if err != nil {
 		return nil, err
 	}
 	if version != 2 {
 		return nil, ErrInvalidPackVersion
 	}
-	objCount, err := pr.readUint32BE()
+	objCount, err := readPackUint32BE(pr)
 	if err != nil {
 		return nil, err
 	}
@@ -1330,7 +1354,7 @@ func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader,
 	packFileName := fmt.Sprintf("pack-%s.pack", packID)
 	packPath := filepath.Join(packDir, packFileName)
 
-	pr, err := NewPackReaderFromFile(packPath)
+	pr, err := NewFilePackReader(packPath, 4096)
 	if err != nil {
 		return nil, err
 	}
@@ -1344,12 +1368,12 @@ func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader,
 	if string(sig[:]) != "PACK" {
 		return nil, ErrInvalidPackSig
 	}
-	if v, err := pr.readUint32BE(); err != nil {
+	if v, err := readPackUint32BE(pr); err != nil {
 		return nil, err
 	} else if v != 2 {
 		return nil, ErrInvalidPackVersion
 	}
-	if _, err := pr.readUint32BE(); err != nil {
+	if _, err := readPackUint32BE(pr); err != nil {
 		return nil, err
 	}
 

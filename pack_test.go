@@ -1,7 +1,6 @@
 package repodojo
 
 import (
-	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -114,7 +113,7 @@ func TestCreateAndReadPack(t *testing.T) {
 		{commitOID1, "let there be light"},
 		{commitOID2, "add license"},
 	} {
-		pr, err := NewPackReaderFromFile(packFilePath)
+		pr, err := NewFilePackReader(packFilePath, 4096)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +141,7 @@ func TestCreateAndReadPack(t *testing.T) {
 			if computedOID == tc.oid {
 				found = true
 				// verify the commit message by re-reading from the pack
-				pr2, err := NewPackReaderFromFile(packFilePath)
+				pr2, err := NewFilePackReader(packFilePath, 4096)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -333,7 +332,7 @@ func TestWritePackFile(t *testing.T) {
 	}
 	defer serverRepo.Close()
 
-	pr, err := NewPackReaderFromFile(packFilePath)
+	pr, err := NewFilePackReader(packFilePath, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +372,7 @@ func TestIteratePackFromFile(t *testing.T) {
 
 	packPath := filepath.Join(cwd, "testdata", "pack-b7f085e431fc05b0bca3d5c306dc148d7bbed2f4.pack")
 
-	pr, err := NewPackReaderFromFile(packPath)
+	pr, err := NewFilePackReader(packPath, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,9 +417,7 @@ func TestIteratePackFromStream(t *testing.T) {
 	}
 	defer file.Close()
 
-	bufReader := bufio.NewReader(file)
-	countingReader := NewCountingReader(bufReader)
-	pr := NewPackReaderFromStream(countingReader)
+	pr := NewStreamPackReader(file, 4096)
 	defer pr.Close()
 
 	packIter, err := NewPackIterator(pr)
