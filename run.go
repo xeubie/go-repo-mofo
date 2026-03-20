@@ -45,13 +45,13 @@ func Run(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
 		return nil
 
 	case DispatchCLI:
-		return runPrint(opts, dispatch.Command, cwdPath, runOpts)
+		return runCommand(opts, dispatch.Command, cwdPath, runOpts)
 	}
 	return nil
 }
 
-func runPrint(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) error {
-	err := runCommand(opts, cmd, cwdPath, runOpts)
+func RunPrint(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
+	err := Run(opts, args, cwdPath, runOpts)
 	if err == nil {
 		return nil
 	}

@@ -25,7 +25,10 @@ func main() {
 		Hash: repodojo.SHA1Hash,
 	}
 
-	if err := repodojo.Run(opts, args, cwdPath, runOpts); err != nil {
-		os.Exit(1)
+	if err := repodojo.RunPrint(opts, args, cwdPath, runOpts); err != nil {
+		if err == repodojo.ErrHandled {
+			os.Exit(1)
+		}
+		panic(err)
 	}
 }
