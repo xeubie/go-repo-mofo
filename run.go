@@ -21,6 +21,7 @@ var (
 	ErrCannotRemoveFileWithStagedAndUnstagedChanges = fmt.Errorf("cannot remove file with staged and unstaged changes")
 	ErrCannotRemoveFileWithStagedChanges       = fmt.Errorf("cannot remove file with staged changes")
 	ErrCannotRemoveFileWithUnstagedChanges     = fmt.Errorf("cannot remove file with unstaged changes")
+	ErrInvalidSwitchTarget                     = fmt.Errorf("invalid switch target")
 )
 
 func Run(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
@@ -74,6 +75,8 @@ func runPrint(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) erro
 		fmt.Fprintf(runOpts.Err, "branch already exists\n")
 	case ErrCannotDeleteCurrentBranch:
 		fmt.Fprintf(runOpts.Err, "cannot delete the current branch\n")
+	case ErrInvalidSwitchTarget:
+		fmt.Fprintf(runOpts.Err, "your switch target doesn't look right and you should feel bad\n")
 	case ErrCannotRemoveFileWithStagedAndUnstagedChanges,
 		ErrCannotRemoveFileWithStagedChanges,
 		ErrCannotRemoveFileWithUnstagedChanges:
@@ -210,6 +213,41 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		case BranchRemove:
 			return repo.RemoveBranch(RemoveBranchInput{Name: cmd.Branch.Name})
 		}
+
+	case CommandSwitch:
+		repo, err := OpenRepo(cwdPath, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		defer repo.Close()
+
+		result, err := repo.Switch(SwitchInput{
+			Kind:          SwitchKindSwitch,
+			Target:        cmd.Switch.Target,
+			UpdateWorkDir: true,
+			Force:         cmd.Switch.Force,
+		})
+		if err != nil {
+			return err
+		}
+		if !result.Success && result.Conflict != nil {
+			fmt.Fprintf(runOpts.Err, "conflicts detected in the following file paths:\n")
+			for _, p := range result.Conflict.StaleFiles {
+				fmt.Fprintf(runOpts.Err, "  %s\n", p)
+			}
+			for _, p := range result.Conflict.StaleDirs {
+				fmt.Fprintf(runOpts.Err, "  %s\n", p)
+			}
+			for _, p := range result.Conflict.UntrackedOverwritten {
+				fmt.Fprintf(runOpts.Err, "  %s\n", p)
+			}
+			for _, p := range result.Conflict.UntrackedRemoved {
+				fmt.Fprintf(runOpts.Err, "  %s\n", p)
+			}
+			fmt.Fprintf(runOpts.Err, "if you really want to continue, throw caution into the wind by adding the -f flag\n")
+			return ErrHandled
+		}
+		return nil
 	}
 	return fmt.Errorf("unknown command")
 }

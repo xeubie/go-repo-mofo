@@ -200,10 +200,11 @@ func TestRun(t *testing.T) {
 		}
 	}
 
+	newHelloTxtContent := "1\n2\n3\n4\n5.0\n6\n7\n8\n9.0\n10.0\n11\n12\n13\n14\n15.0\n16\n17\n18\n19"
+
 	// make another commit
 	{
 		// change a file
-		newHelloTxtContent := "1\n2\n3\n4\n5.0\n6\n7\n8\n9.0\n10.0\n11\n12\n13\n14\n15.0\n16\n17\n18\n19"
 		writeFile(t, workPath, "hello.txt", newHelloTxtContent)
 
 		// replace a file with a directory
@@ -311,6 +312,287 @@ func TestRun(t *testing.T) {
 			t.Fatalf("commit2 parent = %v, want [%s]", obj.Commit.ParentOIDs, commit1)
 		}
 	}
+
+	// try to switch to first commit after making conflicting change
+	{
+		// make a new file (and add it to the index) that conflicts with one from commit1
+		{
+			writeFile(t, workPath, "LICENSE", "different license")
+			err = Run(opts, []string{"add", "LICENSE"}, workPath, runOpts)
+			if err != nil {
+				t.Fatalf("add LICENSE failed: %v", err)
+			}
+
+			// check out commit1 and make sure the conflict is found
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			result, err := repo.Switch(SwitchInput{
+				Kind:          SwitchKindSwitch,
+				Target:        RefOrOid{OID: commit1},
+				UpdateWorkDir: true,
+			})
+			repo.Close()
+			if err != nil {
+				t.Fatalf("switch failed: %v", err)
+			}
+			if result.Success || result.Conflict == nil {
+				t.Fatal("expected conflict switching to commit1 with staged LICENSE")
+			}
+			if len(result.Conflict.StaleFiles) != 1 {
+				t.Fatalf("expected 1 stale file, got %d", len(result.Conflict.StaleFiles))
+			}
+
+			// delete the file
+			os.Remove(filepath.Join(workPath, "LICENSE"))
+			err = Run(opts, []string{"add", "LICENSE"}, workPath, runOpts)
+			if err != nil {
+				t.Fatalf("add LICENSE (delete) failed: %v", err)
+			}
+		}
+
+		// make a new file (only in the work dir) that conflicts with the descendent of a file from commit1
+		{
+			writeFile(t, workPath, "docs", "i conflict with the docs dir in the first commit")
+
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			result, err := repo.Switch(SwitchInput{
+				Kind:          SwitchKindSwitch,
+				Target:        RefOrOid{OID: commit1},
+				UpdateWorkDir: true,
+			})
+			repo.Close()
+			if err != nil {
+				t.Fatalf("switch failed: %v", err)
+			}
+			if result.Success || result.Conflict == nil {
+				t.Fatal("expected conflict switching to commit1 with docs file")
+			}
+
+			os.Remove(filepath.Join(workPath, "docs"))
+		}
+
+		// change a file so it conflicts with the one in commit1
+		{
+			writeFile(t, workPath, "hello.txt", "12345")
+
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			result, err := repo.Switch(SwitchInput{
+				Kind:          SwitchKindSwitch,
+				Target:        RefOrOid{OID: commit1},
+				UpdateWorkDir: true,
+			})
+			repo.Close()
+			if err != nil {
+				t.Fatalf("switch failed: %v", err)
+			}
+			if result.Success || result.Conflict == nil {
+				t.Fatal("expected conflict switching to commit1 with modified hello.txt")
+			}
+			if len(result.Conflict.StaleFiles) != 1 {
+				t.Fatalf("expected 1 stale file, got %d", len(result.Conflict.StaleFiles))
+			}
+
+			// change the file back
+			writeFile(t, workPath, "hello.txt", newHelloTxtContent)
+		}
+
+		// create a dir with a file that conflicts with one in commit1
+		{
+			licenseDir := filepath.Join(workPath, "LICENSE")
+			if err := os.MkdirAll(licenseDir, 0755); err != nil {
+				t.Fatalf("mkdir LICENSE failed: %v", err)
+			}
+			writeFile(t, licenseDir, "foo.txt", "foo")
+
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			result, err := repo.Switch(SwitchInput{
+				Kind:          SwitchKindSwitch,
+				Target:        RefOrOid{OID: commit1},
+				UpdateWorkDir: true,
+			})
+			repo.Close()
+			if err != nil {
+				t.Fatalf("switch failed: %v", err)
+			}
+			if result.Success || result.Conflict == nil {
+				t.Fatal("expected conflict switching to commit1 with LICENSE dir")
+			}
+			if len(result.Conflict.StaleDirs) != 1 {
+				t.Fatalf("expected 1 stale dir, got %d", len(result.Conflict.StaleDirs))
+			}
+
+			os.RemoveAll(filepath.Join(workPath, "LICENSE"))
+		}
+	}
+
+	// switch to first commit
+	err = Run(opts, []string{"switch", commit1}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("switch to commit1 failed: %v", err)
+	}
+
+	// the work dir was updated
+	{
+		content, err := os.ReadFile(filepath.Join(workPath, "hello.txt"))
+		if err != nil {
+			t.Fatalf("read hello.txt failed: %v", err)
+		}
+		if string(content) != helloTxtContent {
+			t.Fatalf("hello.txt content after switch = %q, want %q", string(content), helloTxtContent)
+		}
+
+		// LICENSE should exist
+		if _, err := os.Stat(filepath.Join(workPath, "LICENSE")); err != nil {
+			t.Fatalf("LICENSE should exist after switch to commit1: %v", err)
+		}
+
+		// one/two should not exist
+		if _, err := os.Stat(filepath.Join(workPath, "one", "two")); err == nil {
+			t.Fatal("one/two should not exist after switch to commit1")
+		}
+		if _, err := os.Stat(filepath.Join(workPath, "one")); err == nil {
+			t.Fatal("one should not exist after switch to commit1")
+		}
+	}
+
+	// switch to master
+	err = Run(opts, []string{"switch", "master"}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("switch to master failed: %v", err)
+	}
+
+	// the work dir was updated
+	{
+		content, err := os.ReadFile(filepath.Join(workPath, "hello.txt"))
+		if err != nil {
+			t.Fatalf("read hello.txt failed: %v", err)
+		}
+		if string(content) != newHelloTxtContent {
+			t.Fatalf("hello.txt content after switch to master = %q, want %q", string(content), newHelloTxtContent)
+		}
+
+		// LICENSE should not exist
+		if _, err := os.Stat(filepath.Join(workPath, "LICENSE")); !os.IsNotExist(err) {
+			t.Fatal("LICENSE should not exist after switch to master")
+		}
+	}
+
+	// replacing file with dir and dir with file
+	{
+		// replace file with directory
+		os.Remove(filepath.Join(workPath, "hello.txt"))
+		helloTxtDir := filepath.Join(workPath, "hello.txt")
+		if err := os.MkdirAll(helloTxtDir, 0755); err != nil {
+			t.Fatalf("mkdir hello.txt dir failed: %v", err)
+		}
+		writeFile(t, helloTxtDir, "nested.txt", "")
+		writeFile(t, helloTxtDir, "nested2.txt", "")
+
+		// add the new dir
+		err = Run(opts, []string{"add", "hello.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add hello.txt dir failed: %v", err)
+		}
+
+		// read index and verify entries
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			idx, err := repo.readIndex()
+			repo.Close()
+			if err != nil {
+				t.Fatalf("read index failed: %v", err)
+			}
+
+			expectedCount := 8
+			actualCount := countIndexEntries(idx)
+			if actualCount != expectedCount {
+				t.Fatalf("index entry count = %d, want %d", actualCount, expectedCount)
+			}
+
+			for _, p := range []string{
+				"README", "src/zig/main.zig", "tests/main_test.zig",
+				"hello.txt/nested.txt", "hello.txt/nested2.txt",
+				"run.sh", "one/two/three.txt", "three.txt",
+			} {
+				if _, ok := idx.entries[p]; !ok {
+					t.Fatalf("expected index entry %q not found", p)
+				}
+			}
+		}
+
+		// replace directory with file
+		os.Remove(filepath.Join(workPath, "hello.txt", "nested.txt"))
+		os.Remove(filepath.Join(workPath, "hello.txt", "nested2.txt"))
+		os.Remove(filepath.Join(workPath, "hello.txt"))
+		writeFile(t, workPath, "hello.txt", "")
+
+		// add the new file
+		err = Run(opts, []string{"add", "hello.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add hello.txt file failed: %v", err)
+		}
+
+		// read index and verify entries
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			idx, err := repo.readIndex()
+			repo.Close()
+			if err != nil {
+				t.Fatalf("read index failed: %v", err)
+			}
+
+			expectedCount := 7
+			actualCount := countIndexEntries(idx)
+			if actualCount != expectedCount {
+				t.Fatalf("index entry count = %d, want %d", actualCount, expectedCount)
+			}
+
+			for _, p := range []string{
+				"README", "src/zig/main.zig", "tests/main_test.zig",
+				"hello.txt", "run.sh", "one/two/three.txt", "three.txt",
+			} {
+				if _, ok := idx.entries[p]; !ok {
+					t.Fatalf("expected index entry %q not found", p)
+				}
+			}
+		}
+
+		// a stale index lock file isn't hanging around
+		lockPath := filepath.Join(gitDir, "index.lock")
+		if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+			t.Fatal("stale index.lock file exists")
+		}
+	}
+}
+
+func countIndexEntries(idx *Index) int {
+	count := 0
+	for _, entries := range idx.entries {
+		for _, e := range entries {
+			if e != nil {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }
 
 func writeFile(t *testing.T, dir, name, content string) {

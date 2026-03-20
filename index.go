@@ -112,8 +112,8 @@ func (repo *Repo) readIndex() (*Index, error) {
 		entry.path = string(data[offset : offset+nullIdx])
 		offset += nullIdx + 1 // skip path + null
 
-		// validate mode: normalize permission to 644 if not 755
-		if entry.mode.UnixPerm() != 0o755 {
+		// validate mode: normalize permission to 644 if not 755 (only for regular files)
+		if entry.mode.ObjType() == ModeObjectTypeRegularFile && entry.mode.UnixPerm() != 0o755 {
 			entry.mode = Mode((uint32(entry.mode) & ^uint32(0x1FF)) | 0o644)
 		}
 
@@ -191,6 +191,9 @@ func (idx *Index) AddPath(filePath string) error {
 	}
 
 	if info.IsDir() {
+		// remove any existing file entry with this name
+		idx.RemovePath(filePath, nil)
+
 		dirEntries, err := os.ReadDir(fullPath)
 		if err != nil {
 			return err
@@ -206,6 +209,9 @@ func (idx *Index) AddPath(filePath string) error {
 		}
 		return nil
 	}
+
+	// adding a file — remove any directory entries under this path
+	idx.RemovePath(filePath, nil)
 
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(fullPath)

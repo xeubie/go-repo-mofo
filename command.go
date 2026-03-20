@@ -17,6 +17,7 @@ const (
 	CommandCommit
 	CommandTag
 	CommandBranch
+	CommandSwitch
 )
 
 var commandNames = map[CommandKind]string{
@@ -28,6 +29,7 @@ var commandNames = map[CommandKind]string{
 	CommandCommit:  "commit",
 	CommandTag:     "tag",
 	CommandBranch:  "branch",
+	CommandSwitch:  "switch",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -39,6 +41,7 @@ var commandDescrips = map[CommandKind]string{
 	CommandCommit:  "create a new commit.",
 	CommandTag:     "add, remove, and list tags.",
 	CommandBranch:  "add, remove, and list branches.",
+	CommandSwitch:  "switch to a branch or commit id.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -66,6 +69,10 @@ remove branch:
     repodojo branch rm mybranch
 list branches:
     repodojo branch list`,
+	CommandSwitch: `switch to branch:
+    repodojo switch mybranch
+switch to commit id:
+    repodojo switch a1b2c3...`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -155,6 +162,17 @@ func (ca *CommandArgs) Get(arg string) (string, bool) {
 
 var ErrCommitMessageNotFound = fmt.Errorf("commit message not found")
 
+// RefOrOidFromUser parses a user-supplied string as either a hex OID or a branch ref.
+func RefOrOidFromUser(s string, hashKind HashKind) *RefOrOid {
+	if isHexString(s) && len(s) == hashKind.HexLen() {
+		return &RefOrOid{OID: s}
+	}
+	if ValidateRefName(s) {
+		return &RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: s}}
+	}
+	return nil
+}
+
 type InitCommand struct {
 	Dir string
 }
@@ -211,6 +229,11 @@ type BranchCommand struct {
 	Name    string // for add/remove
 }
 
+type SwitchCommand struct {
+	Target RefOrOid
+	Force  bool
+}
+
 type Command struct {
 	Kind    CommandKind
 	Init    *InitCommand
@@ -221,6 +244,7 @@ type Command struct {
 	Commit  *CommitCommand
 	Tag     *TagCommand
 	Branch  *BranchCommand
+	Switch  *SwitchCommand
 }
 
 func parseCommand(cmdArgs *CommandArgs) *Command {
@@ -351,6 +375,19 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 			}}
 		}
 		return nil
+
+	case CommandSwitch:
+		if len(cmdArgs.PositionalArgs) != 1 {
+			return nil
+		}
+		target := RefOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		if target == nil {
+			return nil
+		}
+		return &Command{Kind: CommandSwitch, Switch: &SwitchCommand{
+			Target: *target,
+			Force:  cmdArgs.Contains("-f"),
+		}}
 	}
 	return nil
 }
@@ -442,7 +479,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repodojo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandBranch; kind++ {
+		for kind := CommandInit; kind <= CommandSwitch; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}
