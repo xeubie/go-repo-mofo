@@ -1076,6 +1076,238 @@ func TestRun(t *testing.T) {
 			t.Fatalf("add foo/bar/hi.txt failed: %v", err)
 		}
 	}
+	// get HEAD contents (commit3)
+	var commit3 string
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		commit3, err = repo.ReadHeadRecurMaybe()
+		repo.Close()
+		if err != nil {
+			t.Fatalf("read HEAD failed: %v", err)
+		}
+		if commit3 == "" {
+			t.Fatal("commit3 is empty")
+		}
+	}
+
+	// create a branch
+	err = Run(opts, []string{"branch", "add", "stuff"}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("branch add stuff failed: %v", err)
+	}
+
+	// switch to the branch
+	err = Run(opts, []string{"switch", "stuff"}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("switch stuff failed: %v", err)
+	}
+
+	// check the refs
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		defer repo.Close()
+
+		headOID, err := repo.ReadHeadRecurMaybe()
+		if err != nil {
+			t.Fatalf("read HEAD failed: %v", err)
+		}
+		if headOID != commit3 {
+			t.Fatalf("HEAD = %s, want %s", headOID, commit3)
+		}
+
+		stuffOID, err := repo.ReadRef(Ref{Kind: RefHead, Name: "stuff"})
+		if err != nil {
+			t.Fatalf("read stuff ref failed: %v", err)
+		}
+		if stuffOID != commit3 {
+			t.Fatalf("stuff ref = %s, want %s", stuffOID, commit3)
+		}
+	}
+
+	// list all branches
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		branches, err := repo.listBranches()
+		repo.Close()
+		if err != nil {
+			t.Fatalf("list branches failed: %v", err)
+		}
+		if len(branches) != 2 {
+			t.Fatalf("branch count = %d, want 2: %v", len(branches), branches)
+		}
+	}
+
+	// get the current branch
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		head, err := repo.Head()
+		repo.Close()
+		if err != nil {
+			t.Fatalf("head failed: %v", err)
+		}
+		if !head.IsRef {
+			t.Fatal("expected HEAD to be a ref")
+		}
+		if head.Ref.Name != "stuff" {
+			t.Fatalf("current branch = %q, want %q", head.Ref.Name, "stuff")
+		}
+	}
+
+	// can't delete current branch
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		err = repo.removeBranch(RemoveBranchInput{Name: "stuff"})
+		repo.Close()
+		if err != ErrCannotDeleteCurrentBranch {
+			t.Fatalf("expected ErrCannotDeleteCurrentBranch, got %v", err)
+		}
+	}
+
+	// make a few commits on the stuff branch
+	{
+		writeFile(t, workPath, "hello.txt", "hello, world on the stuff branch, commit 3!")
+
+		// add the files
+		err = Run(opts, []string{"add", "hello.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add hello.txt failed: %v", err)
+		}
+
+		// make a commit
+		err = Run(opts, []string{"commit", "-m", "third commit"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("third commit on stuff failed: %v", err)
+		}
+
+		writeFile(t, workPath, "stuff.txt", "this was made on the stuff branch, commit 4!")
+
+		// add the files
+		err = Run(opts, []string{"add", "stuff.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add stuff.txt failed: %v", err)
+		}
+
+		// make a commit
+		err = Run(opts, []string{"commit", "-m", "fourth commit"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("fourth commit on stuff failed: %v", err)
+		}
+	}
+
+	// get HEAD contents (commit4_stuff)
+	var commit4Stuff string
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		commit4Stuff, err = repo.ReadHeadRecurMaybe()
+		repo.Close()
+		if err != nil {
+			t.Fatalf("read HEAD failed: %v", err)
+		}
+		if commit4Stuff == "" {
+			t.Fatal("commit4Stuff is empty")
+		}
+	}
+	_ = commit4Stuff
+
+	// create a branch with slashes
+	err = Run(opts, []string{"branch", "add", "a/b/c"}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("branch add a/b/c failed: %v", err)
+	}
+
+	// make sure the ref is created with subdirs
+	{
+		refPath := filepath.Join(gitDir, "refs", "heads", "a", "b", "c")
+		if _, err := os.Stat(refPath); err != nil {
+			t.Fatalf("refs/heads/a/b/c not found: %v", err)
+		}
+	}
+
+	// list all branches
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		branches, err := repo.listBranches()
+		repo.Close()
+		if err != nil {
+			t.Fatalf("list branches failed: %v", err)
+		}
+		if len(branches) != 3 {
+			t.Fatalf("branch count = %d, want 3: %v", len(branches), branches)
+		}
+		branchSet := map[string]bool{}
+		for _, b := range branches {
+			branchSet[b] = true
+		}
+		for _, name := range []string{"a/b/c", "stuff", "master"} {
+			if !branchSet[name] {
+				t.Fatalf("expected branch %q not found in %v", name, branches)
+			}
+		}
+	}
+
+	// remove the branch
+	err = Run(opts, []string{"branch", "rm", "a/b/c"}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("branch rm a/b/c failed: %v", err)
+	}
+
+	// make sure the subdirs are deleted
+	{
+		for _, p := range []string{
+			filepath.Join(gitDir, "refs", "heads", "a", "b", "c"),
+			filepath.Join(gitDir, "refs", "heads", "a", "b"),
+			filepath.Join(gitDir, "refs", "heads", "a"),
+		} {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Fatalf("%s should not exist after branch rm a/b/c", p)
+			}
+		}
+	}
+
+	// switch to master
+	err = Run(opts, []string{"switch", "master"}, workPath, runOpts)
+	if err != nil {
+		t.Fatalf("switch to master failed: %v", err)
+	}
+
+	// modify files and commit
+	{
+		writeFile(t, workPath, "hello.txt", "hello, world once again!")
+		writeFile(t, workPath, "goodbye.txt", "goodbye, world once again!")
+
+		// add the files
+		err = Run(opts, []string{"add", "hello.txt", "goodbye.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add hello.txt goodbye.txt failed: %v", err)
+		}
+
+		// make a commit
+		err = Run(opts, []string{"commit", "-m", "fourth commit"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("fourth commit on master failed: %v", err)
+		}
+	}
 }
 
 func countIndexEntries(idx *Index) int {
