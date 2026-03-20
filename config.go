@@ -13,6 +13,10 @@ type AddConfigInput struct {
 	Value string
 }
 
+type RemoveConfigInput struct {
+	Name string
+}
+
 type configVariable struct {
 	name  string
 	value string
@@ -351,6 +355,33 @@ func (c *Config) Add(input AddConfigInput) error {
 	}
 
 	return nil
+}
+
+// Remove removes a config entry.
+func (c *Config) Remove(input RemoveConfigInput) error {
+	lastDot := strings.LastIndex(input.Name, ".")
+	if lastDot < 0 {
+		return fmt.Errorf("key does not contain a section")
+	}
+
+	sectionName := input.Name[:lastDot]
+	varName := input.Name[lastDot+1:]
+
+	for i := range c.sections {
+		if c.sections[i].name == sectionName {
+			for j := range c.sections[i].variables {
+				if c.sections[i].variables[j].name == varName {
+					c.sections[i].variables = append(c.sections[i].variables[:j], c.sections[i].variables[j+1:]...)
+					if len(c.sections[i].variables) == 0 {
+						c.sections = append(c.sections[:i], c.sections[i+1:]...)
+					}
+					return nil
+				}
+			}
+			return fmt.Errorf("variable not found")
+		}
+	}
+	return fmt.Errorf("section does not exist")
 }
 
 // Write writes the config to a file (typically a lock file).

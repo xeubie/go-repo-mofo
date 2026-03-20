@@ -112,6 +112,34 @@ func (r *Repo) AddConfig(input AddConfigInput) error {
 	return nil
 }
 
+func (r *Repo) RemoveConfig(input RemoveConfigInput) error {
+	config, err := r.loadConfig()
+	if err != nil {
+		return err
+	}
+
+	if err := config.Remove(input); err != nil {
+		return err
+	}
+
+	lock, err := NewLockFile(r.repoDir, "config")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	if err := config.Write(lock.File); err != nil {
+		return err
+	}
+
+	lock.Success = true
+	return nil
+}
+
+func (r *Repo) ListConfig() (*Config, error) {
+	return r.loadConfig()
+}
+
 func (r *Repo) Add(paths []string) error {
 	return r.addPaths(paths)
 }

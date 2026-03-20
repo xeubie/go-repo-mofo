@@ -23,6 +23,7 @@ const (
 	CommandResetDir
 	CommandResetAdd
 	CommandRestore
+	CommandConfig
 )
 
 var commandNames = map[CommandKind]string{
@@ -40,6 +41,7 @@ var commandNames = map[CommandKind]string{
 	CommandResetDir: "reset-dir",
 	CommandResetAdd: "reset-add",
 	CommandRestore:  "restore",
+	CommandConfig:   "config",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -57,6 +59,7 @@ var commandDescrips = map[CommandKind]string{
 	CommandResetDir: "make the current branch point to a new commit id.\nupdates both the index and the work dir.\nsimilar to `git reset --hard`.",
 	CommandResetAdd: "make the current branch point to a new commit id.\ndoes not update the index or the work dir.\nsimilar to `git reset --soft`.",
 	CommandRestore:  "restore files in the work dir.",
+	CommandConfig:   "add, remove, and list config options.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -100,6 +103,12 @@ reset current branch to point to a new commit id:
 	CommandResetAdd: `reset current branch to point to a new commit id:
     repodojo reset-add a1b2c3...`,
 	CommandRestore: `repodojo restore myfile.txt`,
+	CommandConfig: `add config:
+    repodojo config add core.editor vim
+remove config:
+    repodojo config rm core.editor
+list configs:
+    repodojo config list`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -278,10 +287,25 @@ type Command struct {
 	Switch   *SwitchCommand
 	ResetAdd *ResetAddCommand
 	Restore  *RestoreCommand
+	Config   *ConfigCommand
 }
 
 type RestoreCommand struct {
 	Path string
+}
+
+type ConfigCommandKind int
+
+const (
+	ConfigList ConfigCommandKind = iota
+	ConfigAdd
+	ConfigRemove
+)
+
+type ConfigCommand struct {
+	SubKind ConfigCommandKind
+	Name    string // for add/remove
+	Value   string // for add
 }
 
 func parseCommand(cmdArgs *CommandArgs) *Command {
@@ -478,6 +502,38 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 		return &Command{Kind: CommandRestore, Restore: &RestoreCommand{
 			Path: cmdArgs.PositionalArgs[0],
 		}}
+
+	case CommandConfig:
+		if len(cmdArgs.PositionalArgs) == 0 {
+			return nil
+		}
+		subCmd := cmdArgs.PositionalArgs[0]
+		switch subCmd {
+		case "list":
+			return &Command{Kind: CommandConfig, Config: &ConfigCommand{SubKind: ConfigList}}
+		case "add":
+			if len(cmdArgs.PositionalArgs) < 3 {
+				return nil
+			}
+			value := cmdArgs.PositionalArgs[2]
+			if len(cmdArgs.PositionalArgs) > 3 {
+				value = strings.Join(cmdArgs.PositionalArgs[2:], " ")
+			}
+			return &Command{Kind: CommandConfig, Config: &ConfigCommand{
+				SubKind: ConfigAdd,
+				Name:    cmdArgs.PositionalArgs[1],
+				Value:   value,
+			}}
+		case "rm":
+			if len(cmdArgs.PositionalArgs) != 2 {
+				return nil
+			}
+			return &Command{Kind: CommandConfig, Config: &ConfigCommand{
+				SubKind: ConfigRemove,
+				Name:    cmdArgs.PositionalArgs[1],
+			}}
+		}
+		return nil
 	}
 	return nil
 }
@@ -569,7 +625,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repodojo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandRestore; kind++ {
+		for kind := CommandInit; kind <= CommandConfig; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}
