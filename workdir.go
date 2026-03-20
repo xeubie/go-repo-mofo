@@ -98,6 +98,17 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 		parts := SplitPath(p)
 		indexPath := JoinPath(parts)
 
+		// check if path exists in index or on disk
+		_, inEntries := idx.entries[indexPath]
+		inDir := idx.IsDir(indexPath)
+		fullPath := filepath.Join(repo.workPath, indexPath)
+		_, statErr := os.Lstat(fullPath)
+		existsOnDisk := statErr == nil
+
+		if !inEntries && !inDir && !existsOnDisk {
+			return ErrRemoveIndexPathNotFound
+		}
+
 		if !opts.Recursive && idx.IsDir(indexPath) {
 			return ErrRecursiveOptionRequired
 		}
@@ -203,9 +214,17 @@ func (repo *Repo) restoreTreeEntryToIndex(idx *Index, pathParts []string) error 
 		return repo.restoreTreeDirToIndex(idx, oid, indexPath)
 	}
 
+	// read object to get the file size
+	obj, err := repo.NewObject(oid, false)
+	if err != nil {
+		return err
+	}
+	obj.Close()
+
 	entry := &IndexEntry{
 		mode:     mode,
 		oid:      oidBytes,
+		fileSize: uint32(obj.Size),
 		flags:    uint16(len(indexPath)) & 0xFFF,
 		path:     indexPath,
 	}
@@ -234,11 +253,19 @@ func (repo *Repo) restoreTreeDirToIndex(idx *Index, treeOID string, prefix strin
 				return err
 			}
 		} else {
+			childOID := hex.EncodeToString(te.OID)
+			childObj, err := repo.NewObject(childOID, false)
+			if err != nil {
+				return err
+			}
+			childObj.Close()
+
 			entry := &IndexEntry{
-				mode:  te.Mode,
-				oid:   te.OID,
-				flags: uint16(len(childPath)) & 0xFFF,
-				path:  childPath,
+				mode:     te.Mode,
+				oid:      te.OID,
+				fileSize: uint32(childObj.Size),
+				flags:    uint16(len(childPath)) & 0xFFF,
+				path:     childPath,
 			}
 			idx.addEntry(entry)
 		}

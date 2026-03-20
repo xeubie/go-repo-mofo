@@ -580,6 +580,206 @@ func TestRun(t *testing.T) {
 			t.Fatal("stale index.lock file exists")
 		}
 	}
+
+	// changing the index
+	{
+		// can't add a non-existent file
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Add([]string{"no-such-file"})
+			repo.Close()
+			if err != ErrAddIndexPathNotFound {
+				t.Fatalf("expected ErrAddIndexPathNotFound, got %v", err)
+			}
+		}
+
+		// can't remove non-existent file
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Remove([]string{"no-such-file"}, RemoveOptions{UpdateWorkDir: true})
+			repo.Close()
+			if err != ErrRemoveIndexPathNotFound {
+				t.Fatalf("expected ErrRemoveIndexPathNotFound, got %v", err)
+			}
+		}
+
+		// modify a file
+		writeFile(t, filepath.Join(workPath, "one", "two"), "three.txt", "this is now modified")
+
+		// can't remove a file with unstaged changes
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{UpdateWorkDir: true})
+			repo.Close()
+			if err != ErrCannotRemoveFileWithUnstagedChanges {
+				t.Fatalf("expected ErrCannotRemoveFileWithUnstagedChanges, got %v", err)
+			}
+		}
+
+		// stage the changes
+		err = Run(opts, []string{"add", "one/two/three.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add one/two/three.txt failed: %v", err)
+		}
+
+		// modify it again
+		writeFile(t, filepath.Join(workPath, "one", "two"), "three.txt", "this is now modified again")
+
+		// can't untrack a file with staged and unstaged changes
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Untrack([]string{"one/two/three.txt"}, false, false)
+			repo.Close()
+			if err != ErrCannotRemoveFileWithStagedAndUnstagedChanges {
+				t.Fatalf("expected ErrCannotRemoveFileWithStagedAndUnstagedChanges, got %v", err)
+			}
+		}
+
+		// add dir
+		err = Run(opts, []string{"add", "one"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add one failed: %v", err)
+		}
+
+		// can't untrack a dir without -r
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Untrack([]string{"one"}, false, false)
+			repo.Close()
+			if err != ErrRecursiveOptionRequired {
+				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
+			}
+		}
+
+		// can't unadd a dir without -r
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Unadd([]string{"one"}, UnaddOptions{Recursive: false})
+			repo.Close()
+			if err != ErrRecursiveOptionRequired {
+				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
+			}
+		}
+
+		// unadd dir
+		err = Run(opts, []string{"unadd", "-r", "one"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("unadd -r one failed: %v", err)
+		}
+
+		// still tracked because unadd just resets it back to the state from HEAD
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			idx, err := repo.readIndex()
+			repo.Close()
+			if err != nil {
+				t.Fatalf("read index failed: %v", err)
+			}
+
+			entries, ok := idx.entries["one/two/three.txt"]
+			if !ok || entries[0] == nil {
+				t.Fatal("one/two/three.txt should still be in the index after unadd")
+			}
+			if entries[0].fileSize != uint32(len("one, two, three!")) {
+				t.Fatalf("one/two/three.txt file size = %d, want %d", entries[0].fileSize, len("one, two, three!"))
+			}
+		}
+
+		// untrack file
+		err = Run(opts, []string{"untrack", "one/two/three.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("untrack one/two/three.txt failed: %v", err)
+		}
+
+		// not tracked anymore
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			idx, err := repo.readIndex()
+			repo.Close()
+			if err != nil {
+				t.Fatalf("read index failed: %v", err)
+			}
+
+			if _, ok := idx.entries["one/two/three.txt"]; ok {
+				t.Fatal("one/two/three.txt should not be in the index after untrack")
+			}
+		}
+
+		// stage the changes to the file
+		err = Run(opts, []string{"add", "one/two/three.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add one/two/three.txt failed: %v", err)
+		}
+
+		// can't remove a file with staged changes
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{UpdateWorkDir: true})
+			repo.Close()
+			if err != ErrCannotRemoveFileWithStagedChanges {
+				t.Fatalf("expected ErrCannotRemoveFileWithStagedChanges, got %v", err)
+			}
+		}
+
+		// remove file by force
+		err = Run(opts, []string{"rm", "one/two/three.txt", "-f"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("rm -f one/two/three.txt failed: %v", err)
+		}
+
+		// restore file's original content
+		{
+			if err := os.MkdirAll(filepath.Join(workPath, "one", "two"), 0755); err != nil {
+				t.Fatalf("mkdir one/two failed: %v", err)
+			}
+			writeFile(t, filepath.Join(workPath, "one", "two"), "three.txt", "one, two, three!")
+
+			err = Run(opts, []string{"add", "one/two/three.txt"}, workPath, runOpts)
+			if err != nil {
+				t.Fatalf("add one/two/three.txt failed: %v", err)
+			}
+		}
+
+		// remove a file
+		{
+			err = Run(opts, []string{"rm", "one/two/three.txt"}, workPath, runOpts)
+			if err != nil {
+				t.Fatalf("rm one/two/three.txt failed: %v", err)
+			}
+
+			// file should be gone from work dir
+			if _, err := os.Stat(filepath.Join(workPath, "one", "two", "three.txt")); !os.IsNotExist(err) {
+				t.Fatal("one/two/three.txt should not exist after rm")
+			}
+		}
+	}
 }
 
 func countIndexEntries(idx *Index) int {
