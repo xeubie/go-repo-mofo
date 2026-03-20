@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 )
 
 type RunOpts struct {
@@ -178,6 +179,47 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 			return repo.RemoveTag(RemoveTagInput{Name: cmd.Tag.Name})
 		}
 
+	case CommandStatus:
+		repo, err := OpenRepo(cwdPath, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		defer repo.Close()
+
+		head, err := repo.Head()
+		if err == nil {
+			if head.IsRef {
+				fmt.Fprintf(runOpts.Out, "on branch %s\n\n", head.Ref.Name)
+			} else {
+				fmt.Fprintf(runOpts.Out, "HEAD detached at %s\n\n", head.OID)
+			}
+		}
+
+		st, err := repo.Status()
+		if err != nil {
+			return err
+		}
+
+		for _, path := range sortedKeys(st.Untracked) {
+			fmt.Fprintf(runOpts.Out, "?? %s\n", path)
+		}
+		for _, path := range sortedKeys(st.WorkDirModified) {
+			fmt.Fprintf(runOpts.Out, " M %s\n", path)
+		}
+		for _, path := range sortedKeys(st.WorkDirDeleted) {
+			fmt.Fprintf(runOpts.Out, " D %s\n", path)
+		}
+		for _, path := range sortedKeys(st.IndexAdded) {
+			fmt.Fprintf(runOpts.Out, "A  %s\n", path)
+		}
+		for _, path := range sortedKeys(st.IndexModified) {
+			fmt.Fprintf(runOpts.Out, "M  %s\n", path)
+		}
+		for _, path := range sortedKeys(st.IndexDeleted) {
+			fmt.Fprintf(runOpts.Out, "D  %s\n", path)
+		}
+		return nil
+
 	case CommandBranch:
 		repo, err := OpenRepo(cwdPath, opts)
 		if err != nil {
@@ -250,4 +292,13 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		return nil
 	}
 	return fmt.Errorf("unknown command")
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

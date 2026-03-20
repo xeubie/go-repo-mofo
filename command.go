@@ -16,6 +16,7 @@ const (
 	CommandRm
 	CommandCommit
 	CommandTag
+	CommandStatus
 	CommandBranch
 	CommandSwitch
 )
@@ -28,6 +29,7 @@ var commandNames = map[CommandKind]string{
 	CommandRm:      "rm",
 	CommandCommit:  "commit",
 	CommandTag:     "tag",
+	CommandStatus:  "status",
 	CommandBranch:  "branch",
 	CommandSwitch:  "switch",
 }
@@ -40,6 +42,7 @@ var commandDescrips = map[CommandKind]string{
 	CommandRm:      "no longer track file in the index *and* remove it from the work dir.",
 	CommandCommit:  "create a new commit.",
 	CommandTag:     "add, remove, and list tags.",
+	CommandStatus:  "show the status of uncommitted changes.",
 	CommandBranch:  "add, remove, and list branches.",
 	CommandSwitch:  "switch to a branch or commit id.",
 }
@@ -63,6 +66,7 @@ remove tag:
     repodojo tag rm mytag
 list tags:
     repodojo tag list`,
+	CommandStatus: `repodojo status`,
 	CommandBranch: `add branch:
     repodojo branch add mybranch
 remove branch:
@@ -348,6 +352,9 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 			}}
 		}
 		return nil
+
+	case CommandStatus:
+		return &Command{Kind: CommandStatus}
 
 	case CommandBranch:
 		if len(cmdArgs.PositionalArgs) == 0 {

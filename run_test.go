@@ -780,6 +780,126 @@ func TestRun(t *testing.T) {
 			}
 		}
 	}
+
+	// status
+	{
+		// make file
+		writeFile(t, workPath, "goodbye.txt", "Goodbye")
+
+		// make dirs
+		for _, d := range []string{"a", "b", "c"} {
+			if err := os.MkdirAll(filepath.Join(workPath, d), 0755); err != nil {
+				t.Fatalf("mkdir %s failed: %v", d, err)
+			}
+		}
+
+		// make file in dir
+		writeFile(t, filepath.Join(workPath, "a"), "farewell.txt", "Farewell")
+
+		// modify indexed files
+		writeFile(t, workPath, "hello.txt", "hello, world again!")
+		writeFile(t, workPath, "README", "My code project") // size doesn't change
+
+		// delete an indexed file
+		os.Remove(filepath.Join(workPath, "src", "zig", "main.zig"))
+
+		// work dir changes
+		{
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			st, err := repo.Status()
+			repo.Close()
+			if err != nil {
+				t.Fatalf("status failed: %v", err)
+			}
+
+			// check the untracked entries
+			if len(st.Untracked) != 2 {
+				t.Fatalf("untracked count = %d, want 2: %v", len(st.Untracked), st.Untracked)
+			}
+			if !st.Untracked["a"] {
+				t.Fatal("expected 'a' in untracked")
+			}
+			if !st.Untracked["goodbye.txt"] {
+				t.Fatal("expected 'goodbye.txt' in untracked")
+			}
+
+			// check the work_dir_modified entries
+			if len(st.WorkDirModified) != 2 {
+				t.Fatalf("work_dir_modified count = %d, want 2: %v", len(st.WorkDirModified), st.WorkDirModified)
+			}
+			if !st.WorkDirModified["hello.txt"] {
+				t.Fatal("expected 'hello.txt' in work_dir_modified")
+			}
+			if !st.WorkDirModified["README"] {
+				t.Fatal("expected 'README' in work_dir_modified")
+			}
+
+			// check the work_dir_deleted entries
+			if len(st.WorkDirDeleted) != 1 {
+				t.Fatalf("work_dir_deleted count = %d, want 1: %v", len(st.WorkDirDeleted), st.WorkDirDeleted)
+			}
+			if !st.WorkDirDeleted["src/zig/main.zig"] {
+				t.Fatal("expected 'src/zig/main.zig' in work_dir_deleted")
+			}
+		}
+
+		// index changes
+		{
+			// add file to index
+			writeFile(t, filepath.Join(workPath, "c"), "d.txt", "")
+			err = Run(opts, []string{"add", "c/d.txt"}, workPath, runOpts)
+			if err != nil {
+				t.Fatalf("add c/d.txt failed: %v", err)
+			}
+
+			// remove file from index (deleted from work dir)
+			err = Run(opts, []string{"add", "src/zig/main.zig"}, workPath, runOpts)
+			if err != nil {
+				t.Fatalf("add src/zig/main.zig (deleted) failed: %v", err)
+			}
+
+			// get status
+			repo, err := OpenRepo(workPath, opts)
+			if err != nil {
+				t.Fatalf("open repo failed: %v", err)
+			}
+			st, err := repo.Status()
+			repo.Close()
+			if err != nil {
+				t.Fatalf("status failed: %v", err)
+			}
+
+			// check the index_added entries
+			if len(st.IndexAdded) != 1 {
+				t.Fatalf("index_added count = %d, want 1: %v", len(st.IndexAdded), st.IndexAdded)
+			}
+			if !st.IndexAdded["c/d.txt"] {
+				t.Fatal("expected 'c/d.txt' in index_added")
+			}
+
+			// check the index_modified entries
+			if len(st.IndexModified) != 1 {
+				t.Fatalf("index_modified count = %d, want 1: %v", len(st.IndexModified), st.IndexModified)
+			}
+			if !st.IndexModified["hello.txt"] {
+				t.Fatal("expected 'hello.txt' in index_modified")
+			}
+
+			// check the index_deleted entries
+			if len(st.IndexDeleted) != 2 {
+				t.Fatalf("index_deleted count = %d, want 2: %v", len(st.IndexDeleted), st.IndexDeleted)
+			}
+			if !st.IndexDeleted["src/zig/main.zig"] {
+				t.Fatal("expected 'src/zig/main.zig' in index_deleted")
+			}
+			if !st.IndexDeleted["one/two/three.txt"] {
+				t.Fatal("expected 'one/two/three.txt' in index_deleted")
+			}
+		}
+	}
 }
 
 func countIndexEntries(idx *Index) int {

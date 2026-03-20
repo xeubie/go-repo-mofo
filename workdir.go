@@ -7,6 +7,211 @@ import (
 	"path/filepath"
 )
 
+// Status represents the current status of the working directory and index.
+type Status struct {
+	Untracked      map[string]bool
+	WorkDirModified map[string]bool
+	WorkDirDeleted map[string]bool
+	IndexAdded     map[string]bool
+	IndexModified  map[string]bool
+	IndexDeleted   map[string]bool
+}
+
+func (repo *Repo) status() (*Status, error) {
+	idx, err := repo.readIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	untracked := make(map[string]bool)
+	workDirModified := make(map[string]bool)
+	workDirDeleted := make(map[string]bool)
+	indexAdded := make(map[string]bool)
+	indexModified := make(map[string]bool)
+	indexDeleted := make(map[string]bool)
+
+	// track which index entries are seen in the work dir
+	indexSeen := make(map[string]bool)
+
+	// walk work dir
+	repo.walkWorkDir(repo.workPath, ".", idx, indexSeen, untracked, workDirModified)
+
+	// entries in index but not seen in work dir are deleted
+	for path, entries := range idx.entries {
+		if entries[0] != nil && !indexSeen[path] {
+			workDirDeleted[path] = true
+		}
+	}
+
+	// build head tree (flat map of all paths)
+	headTree, err := repo.flattenHeadTree()
+	if err != nil {
+		// no head tree (no commits yet) — all index entries are "added"
+		for path, entries := range idx.entries {
+			if entries[0] != nil {
+				indexAdded[path] = true
+			}
+		}
+		return &Status{
+			Untracked:       untracked,
+			WorkDirModified: workDirModified,
+			WorkDirDeleted:  workDirDeleted,
+			IndexAdded:      indexAdded,
+			IndexModified:   indexModified,
+			IndexDeleted:    indexDeleted,
+		}, nil
+	}
+
+	// compare index to head tree
+	for path, entries := range idx.entries {
+		ie := entries[0]
+		if ie == nil {
+			continue
+		}
+		if headEntry, ok := headTree[path]; ok {
+			if !bytesEqual(ie.oid, headEntry.OID) || ie.mode != headEntry.Mode {
+				indexModified[path] = true
+			}
+		} else {
+			indexAdded[path] = true
+		}
+	}
+
+	// entries in head tree but not in index are deleted
+	for path := range headTree {
+		if _, ok := idx.entries[path]; !ok {
+			indexDeleted[path] = true
+		}
+	}
+
+	return &Status{
+		Untracked:       untracked,
+		WorkDirModified: workDirModified,
+		WorkDirDeleted:  workDirDeleted,
+		IndexAdded:      indexAdded,
+		IndexModified:   indexModified,
+		IndexDeleted:    indexDeleted,
+	}, nil
+}
+
+func (repo *Repo) walkWorkDir(dirPath, relPath string, idx *Index, seen, untracked, modified map[string]bool) bool {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return false
+	}
+
+	containsFile := false
+	isTrackedDir := relPath == "." || idx.IsDir(relPath) || func() bool {
+		_, ok := idx.entries[relPath]
+		return ok
+	}()
+
+	var childUntracked []string
+
+	for _, e := range entries {
+		name := e.Name()
+		if name == ".git" {
+			continue
+		}
+
+		childFull := filepath.Join(dirPath, name)
+		var childRel string
+		if relPath == "." {
+			childRel = name
+		} else {
+			childRel = relPath + "/" + name
+		}
+
+		if e.IsDir() {
+			isFile := repo.walkWorkDir(childFull, childRel, idx, seen, untracked, modified)
+			containsFile = containsFile || isFile
+			if isFile && !isTrackedDir {
+				break
+			}
+		} else {
+			containsFile = true
+
+			if entries, ok := idx.entries[childRel]; ok && entries[0] != nil {
+				seen[childRel] = true
+				differs, err := repo.indexDiffersFromWorkDir(entries[0], childFull)
+				if err == nil && differs {
+					modified[childRel] = true
+				}
+			} else {
+				if isTrackedDir {
+					untracked[childRel] = true
+				} else {
+					childUntracked = append(childUntracked, childRel)
+				}
+			}
+		}
+	}
+
+	if !isTrackedDir {
+		if containsFile {
+			untracked[relPath] = true
+		}
+	} else {
+		for _, p := range childUntracked {
+			untracked[p] = true
+		}
+	}
+
+	return containsFile
+}
+
+// flattenHeadTree returns a flat map of all file paths in the HEAD tree.
+func (repo *Repo) flattenHeadTree() (map[string]TreeEntry, error) {
+	headOID, err := repo.ReadHeadRecurMaybe()
+	if err != nil || headOID == "" {
+		return nil, fmt.Errorf("no HEAD")
+	}
+
+	treeOID, err := repo.readCommitTree(headOID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]TreeEntry)
+	if err := repo.flattenTree(treeOID, "", result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (repo *Repo) flattenTree(treeOID, prefix string, result map[string]TreeEntry) error {
+	obj, err := repo.NewObject(treeOID, true)
+	if err != nil {
+		return err
+	}
+	defer obj.Close()
+
+	if obj.Tree == nil {
+		return nil
+	}
+
+	for _, e := range obj.Tree.Entries {
+		var path string
+		if prefix == "" {
+			path = e.Name
+		} else {
+			path = prefix + "/" + e.Name
+		}
+
+		if e.Mode.ObjType() == ModeObjectTypeTree {
+			childOID := hex.EncodeToString(e.OID)
+			if err := repo.flattenTree(childOID, path, result); err != nil {
+				return err
+			}
+		} else {
+			oidCopy := make([]byte, len(e.OID))
+			copy(oidCopy, e.OID)
+			result[path] = TreeEntry{OID: oidCopy, Mode: e.Mode}
+		}
+	}
+	return nil
+}
+
 type UnaddOptions struct {
 	Recursive bool
 }

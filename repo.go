@@ -136,6 +136,10 @@ func (r *Repo) Commit(metadata CommitMetadata) (string, error) {
 	return r.writeCommit(metadata)
 }
 
+func (r *Repo) Status() (*Status, error) {
+	return r.status()
+}
+
 func (r *Repo) Switch(input SwitchInput) (*SwitchResult, error) {
 	return r.switchDir(input)
 }
