@@ -36,10 +36,11 @@ func (repo *Repo) addBranch(input AddBranchInput) error {
 		return ErrBranchAlreadyExists
 	}
 
-	headsDir := filepath.Join(repo.repoDir, "refs", "heads")
-	if err := os.MkdirAll(headsDir, 0755); err != nil {
+	branchPath := filepath.Join(repo.repoDir, "refs", "heads", input.Name)
+	if err := os.MkdirAll(filepath.Dir(branchPath), 0755); err != nil {
 		return err
 	}
+	headsDir := filepath.Join(repo.repoDir, "refs", "heads")
 
 	oidHex, _ := repo.ReadHeadRecurMaybe()
 
