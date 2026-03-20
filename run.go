@@ -143,6 +143,33 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 			AllowEmpty: cmd.Commit.AllowEmpty,
 		})
 		return err
+
+	case CommandTag:
+		repo, err := OpenRepo(cwdPath, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		defer repo.Close()
+
+		switch cmd.Tag.SubKind {
+		case TagList:
+			tags, err := repo.ListTags()
+			if err != nil {
+				return err
+			}
+			for _, name := range tags {
+				fmt.Fprintf(runOpts.Out, "%s\n", name)
+			}
+			return nil
+		case TagAdd:
+			_, err := repo.AddTag(AddTagInput{
+				Name:    cmd.Tag.Name,
+				Message: cmd.Tag.Message,
+			})
+			return err
+		case TagRemove:
+			return repo.RemoveTag(RemoveTagInput{Name: cmd.Tag.Name})
+		}
 	}
 	return fmt.Errorf("unknown command")
 }

@@ -139,3 +139,11 @@ func (r *Repo) Commit(metadata CommitMetadata) (string, error) {
 func (r *Repo) AddTag(input AddTagInput) (string, error) {
 	return r.addTag(input)
 }
+
+func (r *Repo) RemoveTag(input RemoveTagInput) error {
+	return r.removeTag(input)
+}
+
+func (r *Repo) ListTags() ([]string, error) {
+	return r.listTags()
+}

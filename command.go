@@ -15,6 +15,7 @@ const (
 	CommandUntrack
 	CommandRm
 	CommandCommit
+	CommandTag
 )
 
 var commandNames = map[CommandKind]string{
@@ -24,6 +25,7 @@ var commandNames = map[CommandKind]string{
 	CommandUntrack: "untrack",
 	CommandRm:      "rm",
 	CommandCommit:  "commit",
+	CommandTag:     "tag",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -33,6 +35,7 @@ var commandDescrips = map[CommandKind]string{
 	CommandUntrack: "no longer track file in the index, but leave it in the work dir.",
 	CommandRm:      "no longer track file in the index *and* remove it from the work dir.",
 	CommandCommit:  "create a new commit.",
+	CommandTag:     "add, remove, and list tags.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -48,6 +51,12 @@ repodojo untrack -r mydir`,
 	CommandRm: `repodojo rm myfile.txt
 repodojo rm -r mydir`,
 	CommandCommit: `repodojo commit -m "my commit message"`,
+	CommandTag: `add tag:
+    repodojo tag add mytag
+remove tag:
+    repodojo tag rm mytag
+list tags:
+    repodojo tag list`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -166,6 +175,20 @@ type CommitCommand struct {
 	AllowEmpty bool
 }
 
+type TagCommandKind int
+
+const (
+	TagList TagCommandKind = iota
+	TagAdd
+	TagRemove
+)
+
+type TagCommand struct {
+	SubKind TagCommandKind
+	Name    string // for add/remove
+	Message string // for add (optional)
+}
+
 type Command struct {
 	Kind    CommandKind
 	Init    *InitCommand
@@ -174,6 +197,7 @@ type Command struct {
 	Untrack *UntrackCommand
 	Rm      *RmCommand
 	Commit  *CommitCommand
+	Tag     *TagCommand
 }
 
 func parseCommand(cmdArgs *CommandArgs) *Command {
@@ -242,6 +266,41 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 			Message:    message,
 			AllowEmpty: cmdArgs.Contains("--allow-empty"),
 		}}
+
+	case CommandTag:
+		if len(cmdArgs.PositionalArgs) == 0 {
+			return nil
+		}
+		subCmd := cmdArgs.PositionalArgs[0]
+		switch subCmd {
+		case "list":
+			return &Command{Kind: CommandTag, Tag: &TagCommand{SubKind: TagList}}
+		case "add":
+			if len(cmdArgs.PositionalArgs) != 2 {
+				return nil
+			}
+			var message string
+			if val, ok := cmdArgs.Get("-m"); ok {
+				if val == "" {
+					return nil
+				}
+				message = val
+			}
+			return &Command{Kind: CommandTag, Tag: &TagCommand{
+				SubKind: TagAdd,
+				Name:    cmdArgs.PositionalArgs[1],
+				Message: message,
+			}}
+		case "rm":
+			if len(cmdArgs.PositionalArgs) != 2 {
+				return nil
+			}
+			return &Command{Kind: CommandTag, Tag: &TagCommand{
+				SubKind: TagRemove,
+				Name:    cmdArgs.PositionalArgs[1],
+			}}
+		}
+		return nil
 	}
 	return nil
 }
@@ -333,7 +392,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repodojo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandCommit; kind++ {
+		for kind := CommandInit; kind <= CommandTag; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}
