@@ -1,4 +1,4 @@
-package repodojo
+package repomofo
 
 import (
 	"fmt"
@@ -67,57 +67,57 @@ var commandDescrips = map[CommandKind]string{
 
 var commandExamples = map[CommandKind]string{
 	CommandInit: `in the current dir:
-    repodojo init
+    repomofo init
 in a new dir:
-    repodojo init myproject`,
-	CommandAdd: `repodojo add myfile.txt`,
-	CommandUnadd: `repodojo unadd myfile.txt
-repodojo unadd -r mydir`,
-	CommandUntrack: `repodojo untrack myfile.txt
-repodojo untrack -r mydir`,
-	CommandRm: `repodojo rm myfile.txt
-repodojo rm -r mydir`,
-	CommandCommit: `repodojo commit -m "my commit message"`,
+    repomofo init myproject`,
+	CommandAdd: `repomofo add myfile.txt`,
+	CommandUnadd: `repomofo unadd myfile.txt
+repomofo unadd -r mydir`,
+	CommandUntrack: `repomofo untrack myfile.txt
+repomofo untrack -r mydir`,
+	CommandRm: `repomofo rm myfile.txt
+repomofo rm -r mydir`,
+	CommandCommit: `repomofo commit -m "my commit message"`,
 	CommandTag: `add tag:
-    repodojo tag add mytag
+    repomofo tag add mytag
 remove tag:
-    repodojo tag rm mytag
+    repomofo tag rm mytag
 list tags:
-    repodojo tag list`,
-	CommandStatus: `repodojo status`,
+    repomofo tag list`,
+	CommandStatus: `repomofo status`,
 	CommandBranch: `add branch:
-    repodojo branch add mybranch
+    repomofo branch add mybranch
 remove branch:
-    repodojo branch rm mybranch
+    repomofo branch rm mybranch
 list branches:
-    repodojo branch list`,
+    repomofo branch list`,
 	CommandSwitchDir: `switch to branch:
-    repodojo switch mybranch
+    repomofo switch mybranch
 switch to commit id:
-    repodojo switch a1b2c3...`,
+    repomofo switch a1b2c3...`,
 	CommandReset: `reset current branch to match another branch:
-    repodojo reset mybranch
+    repomofo reset mybranch
 reset current branch to point to a new commit id:
-    repodojo reset a1b2c3...`,
+    repomofo reset a1b2c3...`,
 	CommandResetDir: `reset current branch to match another branch:
-    repodojo reset-dir mybranch
+    repomofo reset-dir mybranch
 reset current branch to point to a new commit id:
-    repodojo reset-dir a1b2c3...`,
+    repomofo reset-dir a1b2c3...`,
 	CommandResetAdd: `reset current branch to point to a new commit id:
-    repodojo reset-add a1b2c3...`,
-	CommandRestore: `repodojo restore myfile.txt`,
+    repomofo reset-add a1b2c3...`,
+	CommandRestore: `repomofo restore myfile.txt`,
 	CommandConfig: `add config:
-    repodojo config add core.editor vim
+    repomofo config add core.editor vim
 remove config:
-    repodojo config rm core.editor
+    repomofo config rm core.editor
 list configs:
-    repodojo config list`,
+    repomofo config list`,
 	CommandRemote: `add remote:
-    repodojo remote add origin https://github.com/...
+    repomofo remote add origin https://github.com/...
 remove remote:
-    repodojo remote rm origin
+    repomofo remote rm origin
 list remotes:
-    repodojo remote list`,
+    repomofo remote list`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -641,7 +641,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 			fmt.Fprintf(w, "%s\n", line)
 		}
 	} else {
-		fmt.Fprintf(w, "help: repodojo <command> [<args>]\n\n")
+		fmt.Fprintf(w, "help: repomofo <command> [<args>]\n\n")
 		for kind := CommandInit; kind <= CommandRemote; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)

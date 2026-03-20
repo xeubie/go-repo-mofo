@@ -1,4 +1,4 @@
-package repodojo
+package repomofo
 
 import (
 	"crypto/sha1"

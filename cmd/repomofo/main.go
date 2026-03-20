@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"repodojo"
+	"repomofo"
 )
 
 func main() {
@@ -16,17 +16,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	runOpts := repodojo.RunOpts{
+	runOpts := repomofo.RunOpts{
 		Out: os.Stdout,
 		Err: os.Stderr,
 	}
 
-	opts := repodojo.RepoOpts{
-		Hash: repodojo.SHA1Hash,
+	opts := repomofo.RepoOpts{
+		Hash: repomofo.SHA1Hash,
 	}
 
-	if err := repodojo.RunPrint(opts, args, cwdPath, runOpts); err != nil {
-		if err == repodojo.ErrHandled {
+	if err := repomofo.RunPrint(opts, args, cwdPath, runOpts); err != nil {
+		if err == repomofo.ErrHandled {
 			os.Exit(1)
 		}
 		panic(err)

@@ -1,4 +1,4 @@
-package repodojo
+package repomofo
 
 import (
 	"fmt"
@@ -104,8 +104,8 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		fmt.Fprintf(runOpts.Out,
 			"congrats, you just created a new repo! aren't you special.\n"+
 				"try setting your name and email like this:\n\n"+
-				"    repodojo config add user.name foo\n"+
-				"    repodojo config add user.email foo@bar\n")
+				"    repomofo config add user.name foo\n"+
+				"    repomofo config add user.email foo@bar\n")
 		return nil
 
 	case CommandAdd:

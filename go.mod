@@ -1,3 +1,3 @@
-module repodojo
+module repomofo
 
 go 1.23
