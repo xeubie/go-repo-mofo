@@ -8,8 +8,16 @@ import (
 )
 
 type RepoOpts struct {
-	Hash   HashKind
-	IsTest bool
+	Hash       HashKind
+	IsTest     bool
+	BufferSize int
+}
+
+func (o RepoOpts) bufferSize() int {
+	if o.BufferSize <= 0 {
+		return 4096
+	}
+	return o.BufferSize
 }
 
 type Repo struct {

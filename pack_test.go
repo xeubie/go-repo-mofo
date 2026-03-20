@@ -113,7 +113,7 @@ func TestCreateAndReadPack(t *testing.T) {
 		{commitOID1, "let there be light"},
 		{commitOID2, "add license"},
 	} {
-		pr, err := NewFilePackReader(packFilePath, 4096)
+		pr, err := NewFilePackReader(packFilePath, opts.bufferSize())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func TestCreateAndReadPack(t *testing.T) {
 			if computedOID == tc.oid {
 				found = true
 				// verify the commit message by re-reading from the pack
-				pr2, err := NewFilePackReader(packFilePath, 4096)
+				pr2, err := NewFilePackReader(packFilePath, opts.bufferSize())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -309,7 +309,7 @@ func TestWritePackFile(t *testing.T) {
 	}
 	defer pw.Close()
 
-	var readBuf [4096]byte
+	readBuf := make([]byte, opts.bufferSize())
 	for {
 		n, err := pw.Read(readBuf[:])
 		if err != nil {
@@ -332,7 +332,7 @@ func TestWritePackFile(t *testing.T) {
 	}
 	defer serverRepo.Close()
 
-	pr, err := NewFilePackReader(packFilePath, 4096)
+	pr, err := NewFilePackReader(packFilePath, opts.bufferSize())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestIteratePackFromFile(t *testing.T) {
 
 	packPath := filepath.Join(cwd, "testdata", "pack-b7f085e431fc05b0bca3d5c306dc148d7bbed2f4.pack")
 
-	pr, err := NewFilePackReader(packPath, 4096)
+	pr, err := NewFilePackReader(packPath, opts.bufferSize())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestIteratePackFromStream(t *testing.T) {
 	}
 	defer file.Close()
 
-	pr := NewStreamPackReader(file, 4096)
+	pr := NewStreamPackReader(file, opts.bufferSize())
 	defer pr.Close()
 
 	packIter, err := NewPackIterator(pr)

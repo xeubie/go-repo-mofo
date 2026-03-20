@@ -1156,6 +1156,7 @@ type PackWriter struct {
 	mode       int // 0=header, 1=object, 2=footer, 3=done
 	zlibWriter *zlib.Writer
 	readerDone bool
+	bufferSize int
 }
 
 func (repo *Repo) NewPackWriter(iter *ObjectIterator) (*PackWriter, error) {
@@ -1181,9 +1182,10 @@ func (repo *Repo) NewPackWriter(iter *ObjectIterator) (*PackWriter, error) {
 	}
 
 	pw := &PackWriter{
-		objects:  objects,
-		hashKind: hashKind,
-		hasher:   hashKind.NewHasher(),
+		objects:    objects,
+		hashKind:   hashKind,
+		hasher:     hashKind.NewHasher(),
+		bufferSize: repo.opts.bufferSize(),
 	}
 
 	// write pack header
@@ -1245,7 +1247,7 @@ func (pw *PackWriter) readStep(p []byte) (int, error) {
 		pw.bufIdx = 0
 
 		if !pw.readerDone {
-			var readBuf [4096]byte
+			readBuf := make([]byte, pw.bufferSize)
 			n, err := pw.objects[pw.objIndex].reader.Read(readBuf[:])
 			if n > 0 {
 				pw.zlibWriter.Write(readBuf[:n])
@@ -1323,7 +1325,7 @@ func (pw *PackWriter) writeObjectHeader() {
 
 func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader, error) {
 	packDir := filepath.Join(repo.repoDir, "objects", "pack")
-	offset, packID, err := searchPackIndexes(repo.opts.Hash, packDir, oidHex)
+	offset, packID, err := searchPackIndexes(repo.opts.Hash, packDir, oidHex, repo.opts.bufferSize())
 	if err != nil {
 		return nil, err
 	}
@@ -1331,7 +1333,7 @@ func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader,
 	packFileName := fmt.Sprintf("pack-%s.pack", packID)
 	packPath := filepath.Join(packDir, packFileName)
 
-	pr, err := NewFilePackReader(packPath, 4096)
+	pr, err := NewFilePackReader(packPath, repo.opts.bufferSize())
 	if err != nil {
 		return nil, err
 	}
@@ -1365,7 +1367,7 @@ func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader,
 	return por, nil
 }
 
-func searchPackIndexes(hashKind HashKind, packDir string, oidHex string) (uint64, string, error) {
+func searchPackIndexes(hashKind HashKind, packDir string, oidHex string, bufferSize int) (uint64, string, error) {
 	entries, err := os.ReadDir(packDir)
 	if err != nil {
 		return 0, "", ErrObjectNotFound
@@ -1393,7 +1395,7 @@ func searchPackIndexes(hashKind HashKind, packDir string, oidHex string) (uint64
 		}
 
 		idxPath := filepath.Join(packDir, name)
-		offset, err := searchPackIndex(hashKind, idxPath, oidBytes)
+		offset, err := searchPackIndex(hashKind, idxPath, oidBytes, bufferSize)
 		if err != nil {
 			continue
 		}
@@ -1404,14 +1406,14 @@ func searchPackIndexes(hashKind HashKind, packDir string, oidHex string) (uint64
 	return 0, "", ErrObjectNotFound
 }
 
-func searchPackIndex(hashKind HashKind, idxPath string, oidBytes []byte) (*uint64, error) {
+func searchPackIndex(hashKind HashKind, idxPath string, oidBytes []byte, bufferSize int) (*uint64, error) {
 	f, err := os.Open(idxPath)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	r := bufio.NewReader(f)
+	r := bufio.NewReaderSize(f, bufferSize)
 
 	// header
 	var header [4]byte
