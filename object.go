@@ -58,21 +58,45 @@ type ObjectHeader struct {
 	Size uint64
 }
 
-// writeLooseObject writes data as a zlib-compressed loose git object.
-func (repo *Repo) writeLooseObject(data []byte) ([]byte, error) {
-	hashKind := repo.opts.Hash
-	oidBytes := hashKind.HashBytes(data)
+// writeObject writes an object to loose storage by streaming from a reader.
+// The header is prepended and the content is hashed and zlib-compressed.
+func (repo *Repo) writeObject(header ObjectHeader, reader io.Reader) ([]byte, error) {
+	headerStr := fmt.Sprintf("%s %d\x00", header.Kind.Name(), header.Size)
+
+	tempFile, err := os.CreateTemp(repo.repoDir, "object.temp.*")
+	if err != nil {
+		return nil, err
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+	defer tempFile.Close()
+
+	hasher := repo.opts.Hash.NewHasher()
+	hasher.Write([]byte(headerStr))
+	if _, err := tempFile.Write([]byte(headerStr)); err != nil {
+		return nil, err
+	}
+
+	w := io.MultiWriter(tempFile, hasher)
+	if _, err := io.Copy(w, reader); err != nil {
+		return nil, err
+	}
+
+	oidBytes := hasher.Sum(nil)
 	oidHex := hex.EncodeToString(oidBytes)
 
 	objDir := filepath.Join(repo.repoDir, "objects", oidHex[:2])
+	objPath := filepath.Join(objDir, oidHex[2:])
+	if _, err := os.Stat(objPath); err == nil {
+		return oidBytes, nil
+	}
+
 	if err := os.MkdirAll(objDir, 0755); err != nil {
 		return nil, err
 	}
 
-	objPath := filepath.Join(objDir, oidHex[2:])
-
-	if _, err := os.Stat(objPath); err == nil {
-		return oidBytes, nil
+	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+		return nil, err
 	}
 
 	lock, err := NewLockFile(objDir, oidHex[2:])
@@ -81,11 +105,11 @@ func (repo *Repo) writeLooseObject(data []byte) ([]byte, error) {
 	}
 	defer lock.Close()
 
-	w := zlib.NewWriter(lock.File)
-	if _, err := w.Write(data); err != nil {
+	zlibW := zlib.NewWriter(lock.File)
+	if _, err := io.Copy(zlibW, tempFile); err != nil {
 		return nil, err
 	}
-	if err := w.Close(); err != nil {
+	if err := zlibW.Close(); err != nil {
 		return nil, err
 	}
 
@@ -210,7 +234,7 @@ func (t *treeBuilder) addTreeEntry(name string, oidBytes []byte) {
 	})
 }
 
-func (repo *Repo) writeTreeObject(tree *treeBuilder) ([]byte, error) {
+func (repo *Repo) writeTree(tree *treeBuilder) ([]byte, error) {
 	sort.Slice(tree.entries, func(i, j int) bool {
 		return tree.entries[i].sortKey < tree.entries[j].sortKey
 	})
@@ -220,21 +244,24 @@ func (repo *Repo) writeTreeObject(tree *treeBuilder) ([]byte, error) {
 		content.Write(e.data)
 	}
 
-	contentBytes := content.Bytes()
-	header := fmt.Sprintf("tree %d\x00", len(contentBytes))
-	fullObj := make([]byte, len(header)+len(contentBytes))
-	copy(fullObj, header)
-	copy(fullObj[len(header):], contentBytes)
-
-	return repo.writeLooseObject(fullObj)
+	return repo.writeObject(
+		ObjectHeader{Kind: ObjectKindTree, Size: uint64(content.Len())},
+		&content,
+	)
 }
 
 func (repo *Repo) writeBlob(content []byte) ([]byte, error) {
-	header := fmt.Sprintf("blob %d\x00", len(content))
-	fullObj := make([]byte, len(header)+len(content))
-	copy(fullObj, header)
-	copy(fullObj[len(header):], content)
-	return repo.writeLooseObject(fullObj)
+	return repo.writeObject(
+		ObjectHeader{Kind: ObjectKindBlob, Size: uint64(len(content))},
+		bytes.NewReader(content),
+	)
+}
+
+func (repo *Repo) writeBlobFromReader(reader io.Reader, size uint64) ([]byte, error) {
+	return repo.writeObject(
+		ObjectHeader{Kind: ObjectKindBlob, Size: size},
+		reader,
+	)
 }
 
 // CommitMetadata holds metadata for creating a commit.
@@ -311,7 +338,7 @@ func (repo *Repo) buildTreeFromIndex(idx *Index, prefix string, childNames []str
 		}
 	}
 
-	return repo.writeTreeObject(tree)
+	return repo.writeTree(tree)
 }
 
 func (repo *Repo) checkForUnfinishedMerge() error {
@@ -449,12 +476,10 @@ func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 
 	commitContent := strings.Join(lines, "\n")
 
-	header := fmt.Sprintf("commit %d\x00", len(commitContent))
-	fullObj := make([]byte, len(header)+len(commitContent))
-	copy(fullObj, header)
-	copy(fullObj[len(header):], commitContent)
-
-	oidBytes, err := repo.writeLooseObject(fullObj)
+	oidBytes, err := repo.writeObject(
+		ObjectHeader{Kind: ObjectKindCommit, Size: uint64(len(commitContent))},
+		strings.NewReader(commitContent),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -467,10 +492,8 @@ func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 	return oidHex, nil
 }
 
-// writeTagObject creates a new tag object. Returns the hex OID.
-func (repo *Repo) writeTagObject(input AddTagInput, targetOID string) (string, error) {
-	hashKind := repo.opts.Hash
-
+// writeTag creates a new tag object. Returns the hex OID.
+func (repo *Repo) writeTag(input AddTagInput, targetOID string) (string, error) {
 	targetKind, err := repo.readObjectKind(targetOID)
 	if err != nil {
 		return "", err
@@ -526,17 +549,14 @@ func (repo *Repo) writeTagObject(input AddTagInput, targetOID string) (string, e
 
 	tagContent := strings.Join(lines, "\n")
 
-	header := fmt.Sprintf("tag %d\x00", len(tagContent))
-	fullObj := make([]byte, len(header)+len(tagContent))
-	copy(fullObj, header)
-	copy(fullObj[len(header):], tagContent)
-
-	oidBytes, err := repo.writeLooseObject(fullObj)
+	oidBytes, err := repo.writeObject(
+		ObjectHeader{Kind: ObjectKindTag, Size: uint64(len(tagContent))},
+		strings.NewReader(tagContent),
+	)
 	if err != nil {
 		return "", err
 	}
 
-	_ = hashKind // used implicitly via writeLooseObject
 	return hex.EncodeToString(oidBytes), nil
 }
 
@@ -925,67 +945,6 @@ func (it *ObjectIterator) includeContentRefs(obj *Object, childDepth int) {
 }
 
 // ---------------------------------------------------------------------------
-// writeObjectFromReader – streaming write of an object to loose storage
-// ---------------------------------------------------------------------------
-
-func (repo *Repo) writeObjectFromReader(header ObjectHeader, reader io.Reader) ([]byte, error) {
-	headerStr := fmt.Sprintf("%s %d\x00", header.Kind.Name(), header.Size)
-
-	tempFile, err := os.CreateTemp(repo.repoDir, "object.temp.*")
-	if err != nil {
-		return nil, err
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-	defer tempFile.Close()
-
-	hasher := repo.opts.Hash.NewHasher()
-	hasher.Write([]byte(headerStr))
-	if _, err := tempFile.Write([]byte(headerStr)); err != nil {
-		return nil, err
-	}
-
-	w := io.MultiWriter(tempFile, hasher)
-	if _, err := io.Copy(w, reader); err != nil {
-		return nil, err
-	}
-
-	oidBytes := hasher.Sum(nil)
-	oidHex := hex.EncodeToString(oidBytes)
-
-	objDir := filepath.Join(repo.repoDir, "objects", oidHex[:2])
-	objPath := filepath.Join(objDir, oidHex[2:])
-	if _, err := os.Stat(objPath); err == nil {
-		return oidBytes, nil
-	}
-
-	if err := os.MkdirAll(objDir, 0755); err != nil {
-		return nil, err
-	}
-
-	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-
-	lock, err := NewLockFile(objDir, oidHex[2:])
-	if err != nil {
-		return nil, err
-	}
-	defer lock.Close()
-
-	zlibW := zlib.NewWriter(lock.File)
-	if _, err := io.Copy(zlibW, tempFile); err != nil {
-		return nil, err
-	}
-	if err := zlibW.Close(); err != nil {
-		return nil, err
-	}
-
-	lock.Success = true
-	return oidBytes, nil
-}
-
-// ---------------------------------------------------------------------------
 // CopyFromPackIterator – writes pack objects as loose objects
 // ---------------------------------------------------------------------------
 
@@ -1004,7 +963,7 @@ func (repo *Repo) CopyFromPackIterator(iter *PackIterator) error {
 		startPos := iter.StartPosition()
 		header := por.Header()
 
-		oidBytes, err := repo.writeObjectFromReader(header, por)
+		oidBytes, err := repo.writeObject(header, por)
 		por.Close()
 		if err != nil {
 			return err

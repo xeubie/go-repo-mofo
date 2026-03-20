@@ -29,7 +29,7 @@ func (repo *Repo) addTag(input AddTagInput) (string, error) {
 	}
 
 	// write the tag object
-	tagOID, err := repo.writeTagObject(input, targetOID)
+	tagOID, err := repo.writeTag(input, targetOID)
 	if err != nil {
 		return "", err
 	}

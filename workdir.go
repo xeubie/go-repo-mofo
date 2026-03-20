@@ -537,28 +537,31 @@ func (repo *Repo) headTreeEntryOIDAndMode(filePath string) ([]byte, Mode) {
 
 // indexDiffersFromWorkDir checks if the work dir file differs from the index entry.
 func (repo *Repo) indexDiffersFromWorkDir(entry *IndexEntry, fullPath string) (bool, error) {
-	var content []byte
-	var err error
-
 	if entry.mode.ObjType() == ModeObjectTypeSymlink {
-		// for symlinks, compare the link target
 		target, err := os.Readlink(fullPath)
 		if err != nil {
 			return true, nil
 		}
-		content = []byte(target)
-	} else {
-		content, err = os.ReadFile(fullPath)
+		oid, err := repo.writeBlob([]byte(target))
 		if err != nil {
-			return true, nil
+			return false, err
 		}
+		return !bytesEqual(entry.oid, oid), nil
 	}
 
-	oid, err := repo.writeBlob(content)
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return true, nil
+	}
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return true, nil
+	}
+	oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
+	f.Close()
 	if err != nil {
 		return false, err
 	}
-
 	return !bytesEqual(entry.oid, oid), nil
 }
 

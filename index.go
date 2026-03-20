@@ -233,13 +233,13 @@ func (idx *Index) AddPath(filePath string) error {
 		return nil
 	}
 
-	// regular file
-	content, err := os.ReadFile(fullPath)
+	// regular file — stream from disk
+	f, err := os.Open(fullPath)
 	if err != nil {
 		return err
 	}
-
-	oid, err := repo.writeBlob(content)
+	oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
+	f.Close()
 	if err != nil {
 		return err
 	}
