@@ -342,6 +342,30 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 				Name: cmd.Config.Name,
 			})
 		}
+	case CommandRemote:
+		repo, err := OpenRepo(cwdPath, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		defer repo.Close()
+
+		switch cmd.Remote.SubKind {
+		case ConfigList:
+			remotes, err := repo.ListRemotes()
+			if err != nil {
+				return err
+			}
+			for _, section := range remotes.sections {
+				for _, v := range section.variables {
+					fmt.Fprintf(runOpts.Out, "%s.%s=%s\n", section.name, v.name, v.value)
+				}
+			}
+			return nil
+		case ConfigAdd:
+			return repo.AddRemote(cmd.Remote.Name, cmd.Remote.Value)
+		case ConfigRemove:
+			return repo.RemoveRemote(cmd.Remote.Name)
+		}
 	}
 	return fmt.Errorf("unknown command")
 }

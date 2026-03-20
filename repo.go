@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type RepoOpts struct {
@@ -138,6 +139,92 @@ func (r *Repo) RemoveConfig(input RemoveConfigInput) error {
 
 func (r *Repo) ListConfig() (*Config, error) {
 	return r.loadConfig()
+}
+
+func (r *Repo) AddRemote(name, url string) error {
+	config, err := r.loadConfig()
+	if err != nil {
+		return err
+	}
+
+	if err := config.Add(AddConfigInput{
+		Name:  fmt.Sprintf("remote.%s.url", name),
+		Value: url,
+	}); err != nil {
+		return err
+	}
+
+	if err := config.Add(AddConfigInput{
+		Name:  fmt.Sprintf("remote.%s.fetch", name),
+		Value: fmt.Sprintf("+refs/heads/*:refs/remotes/%s/*", name),
+	}); err != nil {
+		return err
+	}
+
+	lock, err := NewLockFile(r.repoDir, "config")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	if err := config.Write(lock.File); err != nil {
+		return err
+	}
+
+	lock.Success = true
+	return nil
+}
+
+func (r *Repo) RemoveRemote(name string) error {
+	config, err := r.loadConfig()
+	if err != nil {
+		return err
+	}
+
+	if err := config.Remove(RemoveConfigInput{
+		Name: fmt.Sprintf("remote.%s.url", name),
+	}); err != nil {
+		return err
+	}
+
+	if err := config.Remove(RemoveConfigInput{
+		Name: fmt.Sprintf("remote.%s.fetch", name),
+	}); err != nil {
+		return err
+	}
+
+	lock, err := NewLockFile(r.repoDir, "config")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	if err := config.Write(lock.File); err != nil {
+		return err
+	}
+
+	lock.Success = true
+	return nil
+}
+
+func (r *Repo) ListRemotes() (*Config, error) {
+	config, err := r.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	const prefix = "remote."
+	var filtered []configSection
+	for _, section := range config.sections {
+		if strings.HasPrefix(section.name, prefix) {
+			filtered = append(filtered, configSection{
+				name:      section.name[len(prefix):],
+				variables: section.variables,
+			})
+		}
+	}
+	config.sections = filtered
+	return config, nil
 }
 
 func (r *Repo) Add(paths []string) error {

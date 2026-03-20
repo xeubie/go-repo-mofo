@@ -24,6 +24,7 @@ const (
 	CommandResetAdd
 	CommandRestore
 	CommandConfig
+	CommandRemote
 )
 
 var commandNames = map[CommandKind]string{
@@ -42,6 +43,7 @@ var commandNames = map[CommandKind]string{
 	CommandResetAdd: "reset-add",
 	CommandRestore:  "restore",
 	CommandConfig:   "config",
+	CommandRemote:   "remote",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -60,6 +62,7 @@ var commandDescrips = map[CommandKind]string{
 	CommandResetAdd: "make the current branch point to a new commit id.\ndoes not update the index or the work dir.\nsimilar to `git reset --soft`.",
 	CommandRestore:  "restore files in the work dir.",
 	CommandConfig:   "add, remove, and list config options.",
+	CommandRemote:   "add, remove, and list remotes.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -109,6 +112,12 @@ remove config:
     repodojo config rm core.editor
 list configs:
     repodojo config list`,
+	CommandRemote: `add remote:
+    repodojo remote add origin https://github.com/...
+remove remote:
+    repodojo remote rm origin
+list remotes:
+    repodojo remote list`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -288,6 +297,7 @@ type Command struct {
 	ResetAdd *ResetAddCommand
 	Restore  *RestoreCommand
 	Config   *ConfigCommand
+	Remote   *ConfigCommand
 }
 
 type RestoreCommand struct {
@@ -507,35 +517,40 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 			Path: cmdArgs.PositionalArgs[0],
 		}}
 
-	case CommandConfig:
+	case CommandConfig, CommandRemote:
 		if len(cmdArgs.PositionalArgs) == 0 {
 			return nil
 		}
 		subCmd := cmdArgs.PositionalArgs[0]
+		var cc *ConfigCommand
 		switch subCmd {
 		case "list":
-			return &Command{Kind: CommandConfig, Config: &ConfigCommand{SubKind: ConfigList}}
+			cc = &ConfigCommand{SubKind: ConfigList}
 		case "add":
 			if len(cmdArgs.PositionalArgs) < 3 {
 				return nil
 			}
-			return &Command{Kind: CommandConfig, Config: &ConfigCommand{
+			cc = &ConfigCommand{
 				SubKind: ConfigAdd,
 				Name:    cmdArgs.PositionalArgs[1],
 				Value:   strings.Join(cmdArgs.PositionalArgs[2:], " "),
-			}}
+			}
 		case "rm":
 			if len(cmdArgs.PositionalArgs) != 2 {
 				return nil
 			}
-			return &Command{Kind: CommandConfig, Config: &ConfigCommand{
+			cc = &ConfigCommand{
 				SubKind: ConfigRemove,
 				Name:    cmdArgs.PositionalArgs[1],
-			}}
+			}
 		default:
 			cmdArgs.UnusedArgs[subCmd] = true
 			return nil
 		}
+		if *cmdArgs.CommandKind == CommandConfig {
+			return &Command{Kind: CommandConfig, Config: cc}
+		}
+		return &Command{Kind: CommandRemote, Remote: cc}
 	}
 	return nil
 }
@@ -627,7 +642,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repodojo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandConfig; kind++ {
+		for kind := CommandInit; kind <= CommandRemote; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}
