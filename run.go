@@ -386,9 +386,10 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 			if err != nil {
 				return err
 			}
-			for _, section := range config.sections {
-				for _, v := range section.variables {
-					fmt.Fprintf(runOpts.Out, "%s.%s=%s\n", section.name, v.name, v.value)
+			for _, sectionName := range config.sectionOrder {
+				vars := config.sections[sectionName]
+				for varName, varValue := range vars {
+					fmt.Fprintf(runOpts.Out, "%s.%s=%s\n", sectionName, varName, varValue)
 				}
 			}
 			return nil
@@ -414,9 +415,10 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 			if err != nil {
 				return err
 			}
-			for _, section := range remotes.sections {
-				for _, v := range section.variables {
-					fmt.Fprintf(runOpts.Out, "%s.%s=%s\n", section.name, v.name, v.value)
+			for _, sectionName := range remotes.sectionOrder {
+				vars := remotes.sections[sectionName]
+				for varName, varValue := range vars {
+					fmt.Fprintf(runOpts.Out, "%s.%s=%s\n", sectionName, varName, varValue)
 				}
 			}
 			return nil

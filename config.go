@@ -17,19 +17,18 @@ type RemoveConfigInput struct {
 	Name string
 }
 
-type configVariable struct {
-	name  string
-	value string
-}
-
-type configSection struct {
-	name      string
-	variables []configVariable
-}
-
 // Config represents a parsed git config file.
+// Sections are stored in a map for O(1) lookup, with insertion order
+// preserved via sectionOrder for serialization.
 type Config struct {
-	sections []configSection
+	sections     map[string]map[string]string
+	sectionOrder []string
+}
+
+func newConfig() *Config {
+	return &Config{
+		sections: make(map[string]map[string]string),
+	}
 }
 
 func (repo *Repo) loadConfig() (*Config, error) {
@@ -37,7 +36,7 @@ func (repo *Repo) loadConfig() (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Config{}, nil
+			return newConfig(), nil
 		}
 		return nil, err
 	}
@@ -45,10 +44,10 @@ func (repo *Repo) loadConfig() (*Config, error) {
 }
 
 func parseConfig(content string) (*Config, error) {
-	config := &Config{}
+	config := newConfig()
 	lines := strings.Split(content, "\n")
 
-	var currentSection *configSection
+	var currentSectionName string
 
 	for _, line := range lines {
 		line = strings.TrimRight(line, "\r")
@@ -63,24 +62,22 @@ func parseConfig(content string) (*Config, error) {
 		case parsedEmpty:
 			continue
 		case parsedSectionHeader:
-			if currentSection != nil {
-				config.sections = append(config.sections, *currentSection)
+			currentSectionName = parsed.sectionName
+			if _, ok := config.sections[currentSectionName]; !ok {
+				config.sections[currentSectionName] = make(map[string]string)
+				config.sectionOrder = append(config.sectionOrder, currentSectionName)
 			}
-			currentSection = &configSection{name: parsed.sectionName}
 		case parsedVariable:
-			if currentSection != nil {
-				currentSection.variables = append(currentSection.variables, configVariable{
-					name:  parsed.varName,
-					value: parsed.varValue,
-				})
+			if currentSectionName != "" {
+				if config.sections[currentSectionName] == nil {
+					config.sections[currentSectionName] = make(map[string]string)
+					config.sectionOrder = append(config.sectionOrder, currentSectionName)
+				}
+				config.sections[currentSectionName][parsed.varName] = parsed.varValue
 			}
 		case parsedInvalid:
 			// skip invalid lines
 		}
-	}
-
-	if currentSection != nil {
-		config.sections = append(config.sections, *currentSection)
 	}
 
 	return config, nil
@@ -280,16 +277,7 @@ func escapeConfigStr(s string) string {
 
 // GetSection returns the variables for a section, or nil if not found.
 func (c *Config) GetSection(name string) map[string]string {
-	for _, s := range c.sections {
-		if s.name == name {
-			vars := make(map[string]string)
-			for _, v := range s.variables {
-				vars[v.name] = v.value
-			}
-			return vars
-		}
-	}
-	return nil
+	return c.sections[name]
 }
 
 // Add adds or updates a config entry.
@@ -327,32 +315,11 @@ func (c *Config) Add(input AddConfigInput) error {
 	}
 	varName := strings.ToLower(varNameOrig)
 
-	// find or create section
-	found := false
-	for i := range c.sections {
-		if c.sections[i].name == sectionName {
-			varFound := false
-			for j := range c.sections[i].variables {
-				if c.sections[i].variables[j].name == varName {
-					c.sections[i].variables[j].value = input.Value
-					varFound = true
-					break
-				}
-			}
-			if !varFound {
-				c.sections[i].variables = append(c.sections[i].variables,
-					configVariable{name: varName, value: input.Value})
-			}
-			found = true
-			break
-		}
+	if c.sections[sectionName] == nil {
+		c.sections[sectionName] = make(map[string]string)
+		c.sectionOrder = append(c.sectionOrder, sectionName)
 	}
-	if !found {
-		c.sections = append(c.sections, configSection{
-			name:      sectionName,
-			variables: []configVariable{{name: varName, value: input.Value}},
-		})
-	}
+	c.sections[sectionName][varName] = input.Value
 
 	return nil
 }
@@ -367,21 +334,25 @@ func (c *Config) Remove(input RemoveConfigInput) error {
 	sectionName := input.Name[:lastDot]
 	varName := input.Name[lastDot+1:]
 
-	for i := range c.sections {
-		if c.sections[i].name == sectionName {
-			for j := range c.sections[i].variables {
-				if c.sections[i].variables[j].name == varName {
-					c.sections[i].variables = append(c.sections[i].variables[:j], c.sections[i].variables[j+1:]...)
-					if len(c.sections[i].variables) == 0 {
-						c.sections = append(c.sections[:i], c.sections[i+1:]...)
-					}
-					return nil
-				}
+	vars, ok := c.sections[sectionName]
+	if !ok {
+		return fmt.Errorf("section does not exist")
+	}
+	if _, ok := vars[varName]; !ok {
+		return fmt.Errorf("variable not found")
+	}
+	delete(vars, varName)
+	if len(vars) == 0 {
+		delete(c.sections, sectionName)
+		for i, name := range c.sectionOrder {
+			if name == sectionName {
+				c.sectionOrder = append(c.sectionOrder[:i], c.sectionOrder[i+1:]...)
+				break
 			}
-			return fmt.Errorf("variable not found")
 		}
 	}
-	return fmt.Errorf("section does not exist")
+
+	return nil
 }
 
 // Write writes the config to a file (typically a lock file).
@@ -393,17 +364,22 @@ func (c *Config) Write(f *os.File) error {
 		return err
 	}
 
-	for _, section := range c.sections {
-		if dotIdx := strings.Index(section.name, "."); dotIdx >= 0 {
-			mainName := section.name[:dotIdx]
-			subName := escapeConfigStr(section.name[dotIdx+1:])
-			fmt.Fprintf(f, "[%s \"%s\"]\n", mainName, subName)
-		} else {
-			fmt.Fprintf(f, "[%s]\n", section.name)
+	for _, sectionName := range c.sectionOrder {
+		vars, ok := c.sections[sectionName]
+		if !ok {
+			continue
 		}
 
-		for _, v := range section.variables {
-			fmt.Fprintf(f, "\t%s = %s\n", v.name, v.value)
+		if dotIdx := strings.Index(sectionName, "."); dotIdx >= 0 {
+			mainName := sectionName[:dotIdx]
+			subName := escapeConfigStr(sectionName[dotIdx+1:])
+			fmt.Fprintf(f, "[%s \"%s\"]\n", mainName, subName)
+		} else {
+			fmt.Fprintf(f, "[%s]\n", sectionName)
+		}
+
+		for varName, varValue := range vars {
+			fmt.Fprintf(f, "\t%s = %s\n", varName, varValue)
 		}
 	}
 

@@ -1410,22 +1410,22 @@ func TestRun(t *testing.T) {
 				t.Fatalf("list config failed: %v", err)
 			}
 
-			coreSection := findConfigSection(config, "core")
+			coreSection := config.GetSection("core")
 			if coreSection == nil {
 				t.Fatal("core section not found")
 			}
-			if len(coreSection.variables) != 1 {
-				t.Fatalf("core variable count = %d, want 1", len(coreSection.variables))
+			if len(coreSection) != 1 {
+				t.Fatalf("core variable count = %d, want 1", len(coreSection))
 			}
 
-			branchSection := findConfigSection(config, "branch.master")
+			branchSection := config.GetSection("branch.master")
 			if branchSection == nil {
 				t.Fatal("branch.master section not found")
 			}
-			if len(branchSection.variables) != 1 {
-				t.Fatalf("branch.master variable count = %d, want 1", len(branchSection.variables))
+			if len(branchSection) != 1 {
+				t.Fatalf("branch.master variable count = %d, want 1", len(branchSection))
 			}
-			if val := findConfigVar(branchSection, "remote"); val != "origin" {
+			if val := branchSection["remote"]; val != "origin" {
 				t.Fatalf("branch.master.remote = %q, want %q", val, "origin")
 			}
 		}
@@ -1444,7 +1444,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list config failed: %v", err)
 			}
-			if findConfigSection(config, "branch.master") != nil {
+			if config.GetSection("branch.master") != nil {
 				t.Fatal("branch.master section should not exist after rm")
 			}
 		}
@@ -1469,11 +1469,11 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list config failed: %v", err)
 			}
-			userSection := findConfigSection(config, "user")
+			userSection := config.GetSection("user")
 			if userSection == nil {
 				t.Fatal("user section not found")
 			}
-			if val := findConfigVar(userSection, "name"); val != "radar roark" {
+			if val := userSection["name"]; val != "radar roark" {
 				t.Fatalf("user.name = %q, want %q", val, "radar roark")
 			}
 		}
@@ -1492,12 +1492,12 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list config failed: %v", err)
 			}
-			section := findConfigSection(config, "branch.\"hello.world\"")
+			section := config.GetSection("branch.\"hello.world\"")
 			if section == nil {
 				t.Fatal("branch.\"hello.world\" section not found")
 			}
-			if len(section.variables) != 1 {
-				t.Fatalf("branch.\"hello.world\" variable count = %d, want 1", len(section.variables))
+			if len(section) != 1 {
+				t.Fatalf("branch.\"hello.world\" variable count = %d, want 1", len(section))
 			}
 		}
 
@@ -1515,14 +1515,14 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list config failed: %v", err)
 			}
-			section := findConfigSection(config, "branch.MASTER")
+			section := config.GetSection("branch.MASTER")
 			if section == nil {
 				t.Fatal("branch.MASTER section not found")
 			}
-			if len(section.variables) != 1 {
-				t.Fatalf("branch.MASTER variable count = %d, want 1", len(section.variables))
+			if len(section) != 1 {
+				t.Fatalf("branch.MASTER variable count = %d, want 1", len(section))
 			}
-			if val := findConfigVar(section, "remote"); val != "origin" {
+			if val := section["remote"]; val != "origin" {
 				t.Fatalf("branch.MASTER.remote = %q, want %q", val, "origin")
 			}
 		}
@@ -1548,7 +1548,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list remotes failed: %v", err)
 			}
-			if findConfigSection(remote, "origin") == nil {
+			if remote.GetSection("origin") == nil {
 				t.Fatal("origin remote not found")
 			}
 		}
@@ -1566,7 +1566,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list remotes failed: %v", err)
 			}
-			if findConfigSection(remote, "origin") != nil {
+			if remote.GetSection("origin") != nil {
 				t.Fatal("origin remote should not exist after rm")
 			}
 		}
@@ -1621,23 +1621,6 @@ func TestRun(t *testing.T) {
 	}
 }
 
-func findConfigSection(config *Config, name string) *configSection {
-	for i := range config.sections {
-		if config.sections[i].name == name {
-			return &config.sections[i]
-		}
-	}
-	return nil
-}
-
-func findConfigVar(section *configSection, name string) string {
-	for _, v := range section.variables {
-		if v.name == name {
-			return v.value
-		}
-	}
-	return ""
-}
 
 func countIndexEntries(idx *Index) int {
 	count := 0

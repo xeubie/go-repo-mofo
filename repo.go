@@ -218,17 +218,15 @@ func (r *Repo) ListRemotes() (*Config, error) {
 	}
 
 	const prefix = "remote."
-	var filtered []configSection
-	for _, section := range config.sections {
-		if strings.HasPrefix(section.name, prefix) {
-			filtered = append(filtered, configSection{
-				name:      section.name[len(prefix):],
-				variables: section.variables,
-			})
+	result := newConfig()
+	for _, sectionName := range config.sectionOrder {
+		if strings.HasPrefix(sectionName, prefix) {
+			shortName := sectionName[len(prefix):]
+			result.sections[shortName] = config.sections[sectionName]
+			result.sectionOrder = append(result.sectionOrder, shortName)
 		}
 	}
-	config.sections = filtered
-	return config, nil
+	return result, nil
 }
 
 func (r *Repo) Add(paths []string) error {
