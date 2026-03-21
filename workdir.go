@@ -160,58 +160,6 @@ func (repo *Repo) walkWorkDir(dirPath, relPath string, idx *Index, seen, untrack
 	return containsFile
 }
 
-// flattenHeadTree returns a flat map of all file paths in the HEAD tree.
-func (repo *Repo) flattenHeadTree() (map[string]TreeEntry, error) {
-	headOID, err := repo.ReadHeadRecurMaybe()
-	if err != nil || headOID == "" {
-		return nil, fmt.Errorf("no HEAD")
-	}
-
-	treeOID, err := repo.readCommitTree(headOID)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make(map[string]TreeEntry)
-	if err := repo.flattenTree(treeOID, "", result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (repo *Repo) flattenTree(treeOID, prefix string, result map[string]TreeEntry) error {
-	obj, err := repo.NewObject(treeOID, true)
-	if err != nil {
-		return err
-	}
-	defer obj.Close()
-
-	if obj.Tree == nil {
-		return nil
-	}
-
-	for _, e := range obj.Tree.Entries {
-		var path string
-		if prefix == "" {
-			path = e.Name
-		} else {
-			path = prefix + "/" + e.Name
-		}
-
-		if e.Mode.ObjType() == ModeObjectTypeTree {
-			childOID := hex.EncodeToString(e.OID)
-			if err := repo.flattenTree(childOID, path, result); err != nil {
-				return err
-			}
-		} else {
-			oidCopy := make([]byte, len(e.OID))
-			copy(oidCopy, e.OID)
-			result[path] = TreeEntry{OID: oidCopy, Mode: e.Mode}
-		}
-	}
-	return nil
-}
-
 type UnaddOptions struct {
 	Recursive bool
 }
@@ -220,6 +168,36 @@ type RemoveOptions struct {
 	Force        bool
 	Recursive    bool
 	UpdateWorkDir bool
+}
+
+// indexDiffersFromWorkDir checks if the work dir file differs from the index entry.
+func (repo *Repo) indexDiffersFromWorkDir(entry *IndexEntry, fullPath string) (bool, error) {
+	if entry.mode.ObjType() == ModeObjectTypeSymlink {
+		target, err := os.Readlink(fullPath)
+		if err != nil {
+			return true, nil
+		}
+		oid, err := repo.writeBlob([]byte(target))
+		if err != nil {
+			return false, err
+		}
+		return !bytesEqual(entry.oid, oid), nil
+	}
+
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return true, nil
+	}
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return true, nil
+	}
+	oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
+	f.Close()
+	if err != nil {
+		return false, err
+	}
+	return !bytesEqual(entry.oid, oid), nil
 }
 
 // addPaths stages the given paths by reading them from the work directory,
@@ -340,7 +318,7 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 				continue
 			}
 
-			headOID, headMode := repo.headTreeEntryOIDAndMode(p)
+			headOID, headMode := repo.headTreeEntry(p)
 
 			differsFromHead := false
 			if headOID != nil {
@@ -398,7 +376,7 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 // restoreTreeEntryToIndex looks up a path in the HEAD tree and adds it
 // back to the index if found.
 func (repo *Repo) restoreTreeEntryToIndex(idx *Index, pathParts []string) error {
-	oid, mode, err := repo.lookupTreeEntry(pathParts)
+	oid, mode, err := repo.pathToTreeEntry(pathParts)
 	if err != nil {
 		return nil // not found in HEAD tree, nothing to restore
 	}
@@ -474,242 +452,142 @@ func (repo *Repo) restoreTreeDirToIndex(idx *Index, treeOID string, prefix strin
 	return nil
 }
 
-// lookupTreeEntry walks the HEAD tree to find the entry at the given path.
-// Returns hex OID, mode, and error.
-func (repo *Repo) lookupTreeEntry(pathParts []string) (string, Mode, error) {
-	headOID, err := repo.ReadHeadRecurMaybe()
-	if err != nil || headOID == "" {
-		return "", 0, fmt.Errorf("no HEAD")
-	}
+// objectToFile writes a blob object to the work dir.
+func (repo *Repo) objectToFile(path string, te TreeEntry) error {
+	oidHex := hex.EncodeToString(te.OID)
 
-	treeOID, err := repo.readCommitTree(headOID)
-	if err != nil {
-		return "", 0, err
-	}
-
-	currentTreeOID := treeOID
-	for i, part := range pathParts {
-		obj, err := repo.NewObject(currentTreeOID, true)
-		if err != nil {
-			return "", 0, err
-		}
-
-		found := false
-		if obj.Tree != nil {
-			for _, te := range obj.Tree.Entries {
-				if te.Name == part {
-					oid := hex.EncodeToString(te.OID)
-					obj.Close()
-					if i == len(pathParts)-1 {
-						return oid, te.Mode, nil
-					}
-					if te.Mode.ObjType() != ModeObjectTypeTree {
-						return "", 0, fmt.Errorf("not a tree: %s", part)
-					}
-					currentTreeOID = oid
-					found = true
-					break
-				}
-			}
-		}
-		if !found {
-			obj.Close()
-			return "", 0, fmt.Errorf("not found: %s", part)
-		}
-	}
-	return "", 0, fmt.Errorf("not found")
-}
-
-// headTreeEntryOIDAndMode returns the OID and mode of a path in the HEAD tree.
-// Returns nil OID if not found.
-func (repo *Repo) headTreeEntryOIDAndMode(filePath string) ([]byte, Mode) {
-	parts := SplitPath(filePath)
-	oidHex, mode, err := repo.lookupTreeEntry(parts)
-	if err != nil {
-		return nil, 0
-	}
-	oidBytes, err := hex.DecodeString(oidHex)
-	if err != nil {
-		return nil, 0
-	}
-	return oidBytes, mode
-}
-
-// indexDiffersFromWorkDir checks if the work dir file differs from the index entry.
-func (repo *Repo) indexDiffersFromWorkDir(entry *IndexEntry, fullPath string) (bool, error) {
-	if entry.mode.ObjType() == ModeObjectTypeSymlink {
-		target, err := os.Readlink(fullPath)
-		if err != nil {
-			return true, nil
-		}
-		oid, err := repo.writeBlob([]byte(target))
-		if err != nil {
-			return false, err
-		}
-		return !bytesEqual(entry.oid, oid), nil
-	}
-
-	info, err := os.Lstat(fullPath)
-	if err != nil {
-		return true, nil
-	}
-	f, err := os.Open(fullPath)
-	if err != nil {
-		return true, nil
-	}
-	oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
-	f.Close()
-	if err != nil {
-		return false, err
-	}
-	return !bytesEqual(entry.oid, oid), nil
-}
-
-// restore restores a file or directory in the work dir from the HEAD tree.
-func (repo *Repo) restore(path string) error {
-	parts := SplitPath(path)
-	oidHex, mode, err := repo.lookupTreeEntry(parts)
-	if err != nil {
-		return fmt.Errorf("object not found: %s", path)
-	}
-
-	oidBytes, err := hex.DecodeString(oidHex)
-	if err != nil {
+	fullPath := filepath.Join(repo.workPath, path)
+	parentDir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return err
 	}
 
-	return repo.objectToFile(JoinPath(parts), TreeEntry{OID: oidBytes, Mode: mode})
-}
-
-// TreeChange represents a change between two tree entries.
-type TreeChange struct {
-	Old *TreeEntry // nil means added
-	New *TreeEntry // nil means removed
-}
-
-// treeDiff computes changes between two commit OIDs.
-// Either oid may be "" to represent an empty tree.
-func (repo *Repo) treeDiff(oldCommitOID, newCommitOID string) (map[string]TreeChange, error) {
-	changes := make(map[string]TreeChange)
-
-	var oldTreeOID, newTreeOID string
-	var err error
-	if oldCommitOID != "" {
-		oldTreeOID, err = repo.readCommitTree(oldCommitOID)
+	if te.Mode.ObjType() == ModeObjectTypeTree {
+		obj, err := repo.NewObject(oidHex, true)
 		if err != nil {
-			return nil, err
+			return err
 		}
+		defer obj.Close()
+		if obj.Tree != nil {
+			for _, e := range obj.Tree.Entries {
+				childPath := path + "/" + e.Name
+				oidCopy := make([]byte, len(e.OID))
+				copy(oidCopy, e.OID)
+				if err := repo.objectToFile(childPath, TreeEntry{OID: oidCopy, Mode: e.Mode}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
-	if newCommitOID != "" {
-		newTreeOID, err = repo.readCommitTree(newCommitOID)
+
+	if te.Mode.ObjType() == ModeObjectTypeSymlink {
+		// read the blob to get the symlink target
+		obj, err := repo.NewObject(oidHex, false)
 		if err != nil {
-			return nil, err
+			return err
 		}
+		defer obj.Close()
+		data := make([]byte, obj.Size)
+		n, err := obj.reader.Read(data)
+		if err != nil && err.Error() != "EOF" {
+			return err
+		}
+		data = data[:n]
+		// remove existing file/symlink if present
+		os.Remove(fullPath)
+		return os.Symlink(string(data), fullPath)
 	}
 
-	return repo.compareTreesRecursive(oldTreeOID, newTreeOID, "", changes)
-}
-
-func (repo *Repo) compareTreesRecursive(oldTreeOID, newTreeOID, prefix string, changes map[string]TreeChange) (map[string]TreeChange, error) {
-	oldEntries, err := repo.loadTreeEntries(oldTreeOID)
+	// regular file
+	obj, err := repo.NewObject(oidHex, false)
 	if err != nil {
-		return nil, err
-	}
-	newEntries, err := repo.loadTreeEntries(newTreeOID)
-	if err != nil {
-		return nil, err
-	}
-
-	// deletions and edits
-	for name, oldEntry := range oldEntries {
-		path := name
-		if prefix != "" {
-			path = prefix + "/" + name
-		}
-		oe := oldEntry
-		if newEntry, ok := newEntries[name]; ok {
-			ne := newEntry
-			if !bytesEqual(oe.OID, ne.OID) || oe.Mode != ne.Mode {
-				oldIsTree := oe.Mode.ObjType() == ModeObjectTypeTree
-				newIsTree := ne.Mode.ObjType() == ModeObjectTypeTree
-				oldSub := ""
-				if oldIsTree {
-					oldSub = hex.EncodeToString(oe.OID)
-				}
-				newSub := ""
-				if newIsTree {
-					newSub = hex.EncodeToString(ne.OID)
-				}
-				if oldIsTree || newIsTree {
-					if _, err := repo.compareTreesRecursive(oldSub, newSub, path, changes); err != nil {
-						return nil, err
-					}
-				}
-				if !oldIsTree || !newIsTree {
-					var oldP, newP *TreeEntry
-					if !oldIsTree {
-						oldP = &oe
-					}
-					if !newIsTree {
-						newP = &ne
-					}
-					changes[path] = TreeChange{Old: oldP, New: newP}
-				}
-			}
-		} else {
-			if oe.Mode.ObjType() == ModeObjectTypeTree {
-				sub := hex.EncodeToString(oe.OID)
-				if _, err := repo.compareTreesRecursive(sub, "", path, changes); err != nil {
-					return nil, err
-				}
-			} else {
-				changes[path] = TreeChange{Old: &oe, New: nil}
-			}
-		}
-	}
-
-	// additions
-	for name, newEntry := range newEntries {
-		if _, ok := oldEntries[name]; ok {
-			continue
-		}
-		path := name
-		if prefix != "" {
-			path = prefix + "/" + name
-		}
-		ne := newEntry
-		if ne.Mode.ObjType() == ModeObjectTypeTree {
-			sub := hex.EncodeToString(ne.OID)
-			if _, err := repo.compareTreesRecursive("", sub, path, changes); err != nil {
-				return nil, err
-			}
-		} else {
-			changes[path] = TreeChange{Old: nil, New: &ne}
-		}
-	}
-
-	return changes, nil
-}
-
-func (repo *Repo) loadTreeEntries(treeOID string) (map[string]TreeEntry, error) {
-	result := make(map[string]TreeEntry)
-	if treeOID == "" {
-		return result, nil
-	}
-	obj, err := repo.NewObject(treeOID, true)
-	if err != nil {
-		return nil, err
+		return err
 	}
 	defer obj.Close()
-	if obj.Tree == nil {
-		return result, nil
+
+	perm := os.FileMode(0644)
+	if te.Mode.UnixPerm() == 0o755 {
+		perm = 0755
 	}
-	for _, e := range obj.Tree.Entries {
-		oidCopy := make([]byte, len(e.OID))
-		copy(oidCopy, e.OID)
-		result[e.Name] = TreeEntry{OID: oidCopy, Mode: e.Mode}
+
+	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
 	}
-	return result, nil
+	defer f.Close()
+
+	buf := make([]byte, 8192)
+	for {
+		n, readErr := obj.reader.Read(buf)
+		if n > 0 {
+			if _, err := f.Write(buf[:n]); err != nil {
+				return err
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	return nil
+}
+
+func treeEntryDiffersFromIndex(te *TreeEntry, ie *IndexEntry) bool {
+	if te == nil && ie == nil {
+		return false
+	}
+	if te == nil || ie == nil {
+		return true
+	}
+	return te.Mode != ie.mode || !bytesEqual(te.OID, ie.oid)
+}
+
+// hasUntrackedParent checks if any parent of the path exists as an untracked file in the work dir.
+func (repo *Repo) hasUntrackedParent(path string, idx *Index) bool {
+	parts := SplitPath(path)
+	for i := 1; i < len(parts); i++ {
+		parentPath := JoinPath(parts[:i])
+		fullParent := filepath.Join(repo.workPath, parentPath)
+		info, err := os.Lstat(fullParent)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			// a file exists where a directory is expected
+			if _, ok := idx.entries[parentPath]; !ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasUntrackedDescendant checks if a directory has any file that is not in the index.
+func (repo *Repo) hasUntrackedDescendant(dirPath string, idx *Index) bool {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		fullPath := filepath.Join(dirPath, e.Name())
+		relPath, err := filepath.Rel(repo.workPath, fullPath)
+		if err != nil {
+			continue
+		}
+		relPath = filepath.ToSlash(relPath)
+
+		if e.IsDir() {
+			if repo.hasUntrackedDescendant(fullPath, idx) {
+				return true
+			}
+		} else {
+			if _, ok := idx.entries[relPath]; !ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SwitchKind differentiates between switch and reset.
@@ -917,142 +795,20 @@ func (repo *Repo) checkSwitchConflicts(changes map[string]TreeChange, idx *Index
 	return nil
 }
 
-func treeEntryDiffersFromIndex(te *TreeEntry, ie *IndexEntry) bool {
-	if te == nil && ie == nil {
-		return false
-	}
-	if te == nil || ie == nil {
-		return true
-	}
-	return te.Mode != ie.mode || !bytesEqual(te.OID, ie.oid)
-}
-
-// hasUntrackedParent checks if any parent of the path exists as an untracked file in the work dir.
-func (repo *Repo) hasUntrackedParent(path string, idx *Index) bool {
+// restore restores a file or directory in the work dir from the HEAD tree.
+func (repo *Repo) restore(path string) error {
 	parts := SplitPath(path)
-	for i := 1; i < len(parts); i++ {
-		parentPath := JoinPath(parts[:i])
-		fullParent := filepath.Join(repo.workPath, parentPath)
-		info, err := os.Lstat(fullParent)
-		if err != nil {
-			continue
-		}
-		if !info.IsDir() {
-			// a file exists where a directory is expected
-			if _, ok := idx.entries[parentPath]; !ok {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// hasUntrackedDescendant checks if a directory has any file that is not in the index.
-func (repo *Repo) hasUntrackedDescendant(dirPath string, idx *Index) bool {
-	entries, err := os.ReadDir(dirPath)
+	oidHex, mode, err := repo.pathToTreeEntry(parts)
 	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		fullPath := filepath.Join(dirPath, e.Name())
-		relPath, err := filepath.Rel(repo.workPath, fullPath)
-		if err != nil {
-			continue
-		}
-		relPath = filepath.ToSlash(relPath)
-
-		if e.IsDir() {
-			if repo.hasUntrackedDescendant(fullPath, idx) {
-				return true
-			}
-		} else {
-			if _, ok := idx.entries[relPath]; !ok {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// objectToFile writes a blob object to the work dir.
-func (repo *Repo) objectToFile(path string, te TreeEntry) error {
-	oidHex := hex.EncodeToString(te.OID)
-
-	fullPath := filepath.Join(repo.workPath, path)
-	parentDir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(parentDir, 0755); err != nil {
-		return err
+		return fmt.Errorf("object not found: %s", path)
 	}
 
-	if te.Mode.ObjType() == ModeObjectTypeTree {
-		obj, err := repo.NewObject(oidHex, true)
-		if err != nil {
-			return err
-		}
-		defer obj.Close()
-		if obj.Tree != nil {
-			for _, e := range obj.Tree.Entries {
-				childPath := path + "/" + e.Name
-				oidCopy := make([]byte, len(e.OID))
-				copy(oidCopy, e.OID)
-				if err := repo.objectToFile(childPath, TreeEntry{OID: oidCopy, Mode: e.Mode}); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-
-	if te.Mode.ObjType() == ModeObjectTypeSymlink {
-		// read the blob to get the symlink target
-		obj, err := repo.NewObject(oidHex, false)
-		if err != nil {
-			return err
-		}
-		defer obj.Close()
-		data := make([]byte, obj.Size)
-		n, err := obj.reader.Read(data)
-		if err != nil && err.Error() != "EOF" {
-			return err
-		}
-		data = data[:n]
-		// remove existing file/symlink if present
-		os.Remove(fullPath)
-		return os.Symlink(string(data), fullPath)
-	}
-
-	// regular file
-	obj, err := repo.NewObject(oidHex, false)
+	oidBytes, err := hex.DecodeString(oidHex)
 	if err != nil {
 		return err
 	}
-	defer obj.Close()
 
-	perm := os.FileMode(0644)
-	if te.Mode.UnixPerm() == 0o755 {
-		perm = 0755
-	}
-
-	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 8192)
-	for {
-		n, readErr := obj.reader.Read(buf)
-		if n > 0 {
-			if _, err := f.Write(buf[:n]); err != nil {
-				return err
-			}
-		}
-		if readErr != nil {
-			break
-		}
-	}
-
-	return nil
+	return repo.objectToFile(JoinPath(parts), TreeEntry{OID: oidBytes, Mode: mode})
 }
 
 func bytesEqual(a, b []byte) bool {
