@@ -232,15 +232,27 @@ func (r *Repo) ListRemotes() (*Config, error) {
 }
 
 func (r *Repo) Add(paths []string) error {
-	return r.addPaths(paths)
+	normalized, err := NormalizePaths(r.workPath, paths)
+	if err != nil {
+		return err
+	}
+	return r.addPaths(normalized)
 }
 
 func (r *Repo) Unadd(paths []string, opts UnaddOptions) error {
-	return r.unaddPaths(paths, opts)
+	normalized, err := NormalizePaths(r.workPath, paths)
+	if err != nil {
+		return err
+	}
+	return r.unaddPaths(normalized, opts)
 }
 
 func (r *Repo) Untrack(paths []string, force, recursive bool) error {
-	return r.removePaths(paths, RemoveOptions{
+	normalized, err := NormalizePaths(r.workPath, paths)
+	if err != nil {
+		return err
+	}
+	return r.removePaths(normalized, RemoveOptions{
 		Force:         force,
 		Recursive:     recursive,
 		UpdateWorkDir: false,
@@ -248,7 +260,11 @@ func (r *Repo) Untrack(paths []string, force, recursive bool) error {
 }
 
 func (r *Repo) Remove(paths []string, opts RemoveOptions) error {
-	return r.removePaths(paths, opts)
+	normalized, err := NormalizePaths(r.workPath, paths)
+	if err != nil {
+		return err
+	}
+	return r.removePaths(normalized, opts)
 }
 
 func (r *Repo) Commit(metadata CommitMetadata) (string, error) {
@@ -260,7 +276,11 @@ func (r *Repo) Status() (*Status, error) {
 }
 
 func (r *Repo) Restore(path string) error {
-	return r.restore(path)
+	rel, err := RelativePath(r.workPath, path)
+	if err != nil {
+		return err
+	}
+	return r.restore(JoinPath(SplitPath(rel)))
 }
 
 func (r *Repo) ResetAdd(target RefOrOid) error {

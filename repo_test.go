@@ -61,6 +61,12 @@ func TestSimple(t *testing.T) {
 		t.Fatalf("commit c failed: %v", err)
 	}
 
+	// can't add path that is outside repo
+	err = repo.Add([]string{"../README.md"})
+	if err != ErrPathIsOutsideRepo {
+		t.Fatalf("expected ErrPathIsOutsideRepo, got %v", err)
+	}
+
 	// commits that haven't changed content are an error
 	_, err = repo.Commit(CommitMetadata{Message: "d"})
 	if err == nil {

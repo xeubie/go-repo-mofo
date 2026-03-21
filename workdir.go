@@ -209,9 +209,7 @@ func (repo *Repo) addPaths(paths []string) error {
 	}
 
 	for _, p := range paths {
-		parts := SplitPath(p)
-		indexPath := JoinPath(parts)
-		if err := idx.AddPath(indexPath); err != nil {
+		if err := idx.AddPath(p); err != nil {
 			return err
 		}
 	}

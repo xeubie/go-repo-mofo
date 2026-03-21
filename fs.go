@@ -112,6 +112,27 @@ func JoinPath(parts []string) string {
 	return strings.Join(nonEmpty, "/")
 }
 
+// RelativePath resolves a path relative to the working directory and ensures
+// it falls within the repo's work path. Returns the path relative to workPath.
+func RelativePath(workPath, path string) (string, error) {
+	resolved := path
+	if !filepath.IsAbs(path) {
+		resolved = filepath.Join(workPath, path)
+	}
+	resolved = filepath.Clean(resolved)
+
+	// make sure the resolved path is within the work path
+	rel, err := filepath.Rel(workPath, resolved)
+	if err != nil {
+		return "", ErrPathIsOutsideRepo
+	}
+	if strings.HasPrefix(rel, "..") {
+		return "", ErrPathIsOutsideRepo
+	}
+
+	return filepath.ToSlash(rel), nil
+}
+
 // SplitPath splits a forward-slash path into its components.
 func SplitPath(path string) []string {
 	path = filepath.ToSlash(path)
@@ -122,4 +143,17 @@ func SplitPath(path string) []string {
 		}
 	}
 	return parts
+}
+
+// NormalizePaths resolves each path relative to workPath and normalizes it.
+func NormalizePaths(workPath string, paths []string) ([]string, error) {
+	normalized := make([]string, 0, len(paths))
+	for _, p := range paths {
+		rel, err := RelativePath(workPath, p)
+		if err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, JoinPath(SplitPath(rel)))
+	}
+	return normalized, nil
 }

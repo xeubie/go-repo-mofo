@@ -24,6 +24,7 @@ var (
 	ErrCannotRemoveFileWithStagedChanges            = fmt.Errorf("cannot remove file with staged changes")
 	ErrCannotRemoveFileWithUnstagedChanges          = fmt.Errorf("cannot remove file with unstaged changes")
 	ErrInvalidSwitchTarget                          = fmt.Errorf("invalid switch target")
+	ErrPathIsOutsideRepo                            = fmt.Errorf("path is outside repo")
 )
 
 func Run(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
