@@ -1,6 +1,7 @@
 package repomofo
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -69,7 +70,7 @@ func (repo *Repo) status() (*Status, error) {
 			continue
 		}
 		if headEntry, ok := headTree[path]; ok {
-			if !bytesEqual(ie.oid, headEntry.OID) || ie.mode != headEntry.Mode {
+			if !bytes.Equal(ie.oid, headEntry.OID) || ie.mode != headEntry.Mode {
 				indexModified[path] = true
 			}
 		} else {
@@ -181,7 +182,7 @@ func (repo *Repo) indexDiffersFromWorkDir(entry *IndexEntry, fullPath string) (b
 		if err != nil {
 			return false, err
 		}
-		return !bytesEqual(entry.oid, oid), nil
+		return !bytes.Equal(entry.oid, oid), nil
 	}
 
 	info, err := os.Lstat(fullPath)
@@ -197,7 +198,7 @@ func (repo *Repo) indexDiffersFromWorkDir(entry *IndexEntry, fullPath string) (b
 	if err != nil {
 		return false, err
 	}
-	return !bytesEqual(entry.oid, oid), nil
+	return !bytes.Equal(entry.oid, oid), nil
 }
 
 // addPaths stages the given paths by reading them from the work directory,
@@ -320,7 +321,7 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 
 			differsFromHead := false
 			if headOID != nil {
-				if cleanEntry.mode != headMode || !bytesEqual(cleanEntry.oid, headOID) {
+				if cleanEntry.mode != headMode || !bytes.Equal(cleanEntry.oid, headOID) {
 					differsFromHead = true
 				}
 			}
@@ -538,7 +539,7 @@ func treeEntryDiffersFromIndex(te *TreeEntry, ie *IndexEntry) bool {
 	if te == nil || ie == nil {
 		return true
 	}
-	return te.Mode != ie.mode || !bytesEqual(te.OID, ie.oid)
+	return te.Mode != ie.mode || !bytes.Equal(te.OID, ie.oid)
 }
 
 // hasUntrackedParent checks if any parent of the path exists as an untracked file in the work dir.
@@ -809,14 +810,3 @@ func (repo *Repo) restore(path string) error {
 	return repo.objectToFile(JoinPath(parts), TreeEntry{OID: oidBytes, Mode: mode})
 }
 
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}

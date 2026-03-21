@@ -1,6 +1,7 @@
 package repomofo
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 )
@@ -43,7 +44,7 @@ func (repo *Repo) treeCompare(oldTreeOID, newTreeOID, prefix string, changes map
 		oe := oldEntry
 		if newEntry, ok := newEntries[name]; ok {
 			ne := newEntry
-			if !bytesEqual(oe.OID, ne.OID) || oe.Mode != ne.Mode {
+			if !bytes.Equal(oe.OID, ne.OID) || oe.Mode != ne.Mode {
 				oldIsTree := oe.Mode.ObjType() == ModeObjectTypeTree
 				newIsTree := ne.Mode.ObjType() == ModeObjectTypeTree
 				oldSub := ""
