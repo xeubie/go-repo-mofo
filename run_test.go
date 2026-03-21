@@ -68,6 +68,18 @@ func TestRun(t *testing.T) {
 		t.Fatalf("open repo failed: %v", err)
 	}
 
+	// make sure we can get status before first commit
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		_, err = repo.Status()
+		if err != nil {
+			t.Fatalf("status before first commit failed: %v", err)
+		}
+	}
+
 	helloTxtContent := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19"
 
 	// create files
