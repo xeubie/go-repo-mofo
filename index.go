@@ -190,10 +190,46 @@ func (idx *Index) AddPath(filePath string) error {
 		return err
 	}
 
-	if info.IsDir() {
-		// remove any existing file entry with this name
+	// remove entries that are parents of this path (directory replaces file)
+	parts := SplitPath(filePath)
+	for i := 1; i < len(parts); i++ {
+		parentPath := JoinPath(parts[:i])
+		if _, ok := idx.entries[parentPath]; ok {
+			idx.RemovePath(parentPath, nil)
+		}
+	}
+
+	switch {
+	case info.Mode().IsRegular():
+		// remove entries that are children of this path (file replaces directory)
 		idx.RemovePath(filePath, nil)
 
+		f, err := os.Open(fullPath)
+		if err != nil {
+			return err
+		}
+		oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
+		f.Close()
+		if err != nil {
+			return err
+		}
+
+		mode := ModeFromFileInfo(info)
+		if mode.UnixPerm() != 0o755 {
+			mode = Mode(0o100644)
+		}
+
+		entry := &IndexEntry{
+			mode:     mode,
+			fileSize: uint32(info.Size()),
+			oid:      oid,
+			flags:    uint16(len(filePath)) & 0xFFF,
+			path:     filePath,
+		}
+		idx.addEntry(entry)
+		return nil
+
+	case info.IsDir():
 		dirEntries, err := os.ReadDir(fullPath)
 		if err != nil {
 			return err
@@ -208,12 +244,11 @@ func (idx *Index) AddPath(filePath string) error {
 			}
 		}
 		return nil
-	}
 
-	// adding a file — remove any directory entries under this path
-	idx.RemovePath(filePath, nil)
+	case info.Mode()&os.ModeSymlink != 0:
+		// remove entries that are children of this path (file replaces directory)
+		idx.RemovePath(filePath, nil)
 
-	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(fullPath)
 		if err != nil {
 			return err
@@ -231,35 +266,10 @@ func (idx *Index) AddPath(filePath string) error {
 		}
 		idx.addEntry(entry)
 		return nil
-	}
 
-	// regular file — stream from disk
-	f, err := os.Open(fullPath)
-	if err != nil {
-		return err
+	default:
+		return nil
 	}
-	oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
-	f.Close()
-	if err != nil {
-		return err
-	}
-
-	mode := ModeFromFileInfo(info)
-	// normalize permission
-	if mode.UnixPerm() != 0o755 {
-		mode = Mode(0o100644)
-	}
-
-	entry := &IndexEntry{
-		mode:     mode,
-		fileSize: uint32(info.Size()),
-		oid:      oid,
-		flags:    uint16(len(filePath)) & 0xFFF,
-		path:     filePath,
-	}
-
-	idx.addEntry(entry)
-	return nil
 }
 
 // RemovePath removes a path (or all paths under a directory) from the index.
