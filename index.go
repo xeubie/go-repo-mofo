@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -128,6 +129,118 @@ func (repo *Repo) readIndex() (*Index, error) {
 	return idx, nil
 }
 
+// AddPath adds a file from the working directory to the index.
+func (idx *Index) AddPath(filePath string, te *TreeEntry) error {
+	repo := idx.repo
+	fullPath := filepath.Join(repo.workPath, filePath)
+
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return err
+	}
+
+	// remove entries that are parents of this path (directory replaces file)
+	parts := SplitPath(filePath)
+	for i := 1; i < len(parts); i++ {
+		parentPath := JoinPath(parts[:i])
+		if _, ok := idx.entries[parentPath]; ok {
+			idx.RemovePath(parentPath, nil)
+		}
+	}
+
+	switch {
+	case info.Mode().IsRegular():
+		// remove entries that are children of this path (file replaces directory)
+		idx.RemovePath(filePath, nil)
+
+		f, err := os.Open(fullPath)
+		if err != nil {
+			return err
+		}
+		oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
+		f.Close()
+		if err != nil {
+			return err
+		}
+
+		// get the mode
+		// on windows, if a tree entry was supplied and its hash is the same,
+		// use its mode. otherwise, if there is an existing entry in the index
+		// and its hash is the same, use its mode. only if both are untrue
+		// should we use the mode from the disk.
+		var mode Mode
+		modeSet := false
+		if runtime.GOOS == "windows" {
+			if te != nil && bytes.Equal(oid, te.OID) {
+				mode = te.Mode
+				modeSet = true
+			} else if entries, ok := idx.entries[filePath]; ok && entries[0] != nil {
+				if bytes.Equal(oid, entries[0].oid) {
+					mode = entries[0].mode
+					modeSet = true
+				}
+			}
+		}
+		if !modeSet {
+			mode = ModeFromFileInfo(info)
+			if mode.UnixPerm() != 0o755 {
+				mode = Mode(0o100644)
+			}
+		}
+
+		entry := &IndexEntry{
+			mode:     mode,
+			fileSize: uint32(info.Size()),
+			oid:      oid,
+			flags:    uint16(len(filePath)) & 0xFFF,
+			path:     filePath,
+		}
+		idx.addEntry(entry)
+		return nil
+
+	case info.IsDir():
+		dirEntries, err := os.ReadDir(fullPath)
+		if err != nil {
+			return err
+		}
+		for _, e := range dirEntries {
+			if e.Name() == ".git" {
+				continue
+			}
+			subPath := JoinPath([]string{filePath, e.Name()})
+			if err := idx.AddPath(subPath, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case info.Mode()&os.ModeSymlink != 0:
+		// remove entries that are children of this path (file replaces directory)
+		idx.RemovePath(filePath, nil)
+
+		target, err := os.Readlink(fullPath)
+		if err != nil {
+			return err
+		}
+		oid, err := repo.writeBlob([]byte(target))
+		if err != nil {
+			return err
+		}
+		entry := &IndexEntry{
+			mode:     Mode(0o120000),
+			fileSize: uint32(len(target)),
+			oid:      oid,
+			flags:    uint16(len(filePath)) & 0xFFF,
+			path:     filePath,
+		}
+		idx.addEntry(entry)
+		return nil
+
+	default:
+		return nil
+	}
+}
+
 func (idx *Index) addEntry(entry *IndexEntry) {
 	stage := (entry.flags >> 12) & 0x3
 
@@ -168,108 +281,6 @@ func (idx *Index) addEntry(entry *IndexEntry) {
 	}
 
 	idx.rootChildren[child] = true
-}
-
-// AddPath adds a file from the working directory to the index.
-// If the file doesn't exist on disk but is in the index, it gets removed.
-func (idx *Index) AddPath(filePath string) error {
-	repo := idx.repo
-	fullPath := filepath.Join(repo.workPath, filePath)
-
-	info, err := os.Lstat(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			_, inEntries := idx.entries[filePath]
-			inDir := idx.IsDir(filePath)
-			if !inEntries && !inDir {
-				return ErrAddIndexPathNotFound
-			}
-			idx.RemovePath(filePath, nil)
-			return nil
-		}
-		return err
-	}
-
-	// remove entries that are parents of this path (directory replaces file)
-	parts := SplitPath(filePath)
-	for i := 1; i < len(parts); i++ {
-		parentPath := JoinPath(parts[:i])
-		if _, ok := idx.entries[parentPath]; ok {
-			idx.RemovePath(parentPath, nil)
-		}
-	}
-
-	switch {
-	case info.Mode().IsRegular():
-		// remove entries that are children of this path (file replaces directory)
-		idx.RemovePath(filePath, nil)
-
-		f, err := os.Open(fullPath)
-		if err != nil {
-			return err
-		}
-		oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
-		f.Close()
-		if err != nil {
-			return err
-		}
-
-		mode := ModeFromFileInfo(info)
-		if mode.UnixPerm() != 0o755 {
-			mode = Mode(0o100644)
-		}
-
-		entry := &IndexEntry{
-			mode:     mode,
-			fileSize: uint32(info.Size()),
-			oid:      oid,
-			flags:    uint16(len(filePath)) & 0xFFF,
-			path:     filePath,
-		}
-		idx.addEntry(entry)
-		return nil
-
-	case info.IsDir():
-		dirEntries, err := os.ReadDir(fullPath)
-		if err != nil {
-			return err
-		}
-		for _, e := range dirEntries {
-			if e.Name() == ".git" {
-				continue
-			}
-			subPath := JoinPath([]string{filePath, e.Name()})
-			if err := idx.AddPath(subPath); err != nil {
-				return err
-			}
-		}
-		return nil
-
-	case info.Mode()&os.ModeSymlink != 0:
-		// remove entries that are children of this path (file replaces directory)
-		idx.RemovePath(filePath, nil)
-
-		target, err := os.Readlink(fullPath)
-		if err != nil {
-			return err
-		}
-		oid, err := repo.writeBlob([]byte(target))
-		if err != nil {
-			return err
-		}
-		entry := &IndexEntry{
-			mode:     Mode(0o120000),
-			fileSize: uint32(len(target)),
-			oid:      oid,
-			flags:    uint16(len(filePath)) & 0xFFF,
-			path:     filePath,
-		}
-		idx.addEntry(entry)
-		return nil
-
-	default:
-		return nil
-	}
 }
 
 // RemovePath removes a path (or all paths under a directory) from the index.
@@ -336,6 +347,53 @@ func (idx *Index) rebuildDirMaps() {
 			}
 		}
 	}
+}
+
+type IndexAction int
+
+const (
+	IndexActionAdd IndexAction = iota
+	IndexActionRm
+)
+
+// AddOrRemovePath checks if the path exists on disk. If not, it removes it
+// from the index. If it does exist, it either adds or removes based on action.
+func (idx *Index) AddOrRemovePath(filePath string, action IndexAction, removedPaths map[string]bool) error {
+	repo := idx.repo
+	fullPath := filepath.Join(repo.workPath, filePath)
+
+	_, err := os.Lstat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			_, inEntries := idx.entries[filePath]
+			inDir := idx.IsDir(filePath)
+			if !inEntries && !inDir {
+				switch action {
+				case IndexActionAdd:
+					return ErrAddIndexPathNotFound
+				case IndexActionRm:
+					return ErrRemoveIndexPathNotFound
+				}
+			}
+			idx.RemovePath(filePath, removedPaths)
+			return nil
+		}
+		return err
+	}
+
+	switch action {
+	case IndexActionAdd:
+		return idx.AddPath(filePath, nil)
+	case IndexActionRm:
+		_, inEntries := idx.entries[filePath]
+		inDir := idx.IsDir(filePath)
+		if !inEntries && !inDir {
+			return ErrRemoveIndexPathNotFound
+		}
+		idx.RemovePath(filePath, removedPaths)
+		return nil
+	}
+	return nil
 }
 
 // Write serializes the index to the given file (typically a lock file).

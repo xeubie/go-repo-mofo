@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -247,8 +248,13 @@ func TestRun(t *testing.T) {
 		}
 
 		// make symlink
-		if err := os.Symlink("one/two/three.txt", filepath.Join(workPath, "three.txt")); err != nil {
-			t.Fatalf("symlink failed: %v", err)
+		if runtime.GOOS == "windows" {
+			// windows requires special privileges for symlinks, so write a fake symlink
+			writeFile(t, workPath, "three.txt", "one/two/three.txt")
+		} else {
+			if err := os.Symlink("one/two/three.txt", filepath.Join(workPath, "three.txt")); err != nil {
+				t.Fatalf("symlink failed: %v", err)
+			}
 		}
 
 		// delete a file

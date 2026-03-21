@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // Status represents the current status of the working directory and index.
@@ -210,7 +211,7 @@ func (repo *Repo) addPaths(paths []string) error {
 	}
 
 	for _, p := range paths {
-		if err := idx.AddPath(p); err != nil {
+		if err := idx.AddOrRemovePath(p, IndexActionAdd, nil); err != nil {
 			return err
 		}
 	}
@@ -238,16 +239,16 @@ func (repo *Repo) unaddPaths(paths []string, opts UnaddOptions) error {
 	}
 
 	for _, p := range paths {
-		parts := SplitPath(p)
-		indexPath := JoinPath(parts)
-
-		if !opts.Recursive && idx.IsDir(indexPath) {
+		if !opts.Recursive && idx.IsDir(p) {
 			return ErrRecursiveOptionRequired
 		}
 
-		idx.RemovePath(indexPath, nil)
+		if err := idx.AddOrRemovePath(p, IndexActionRm, nil); err != nil {
+			return err
+		}
 
 		// restore entry from HEAD tree if it exists
+		parts := SplitPath(p)
 		if err := repo.restoreTreeEntryToIndex(idx, parts); err != nil {
 			return err
 		}
@@ -277,21 +278,13 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 	removedPaths := make(map[string]bool)
 
 	for _, p := range paths {
-		parts := SplitPath(p)
-		indexPath := JoinPath(parts)
-
-		// check if path exists in index
-		_, inEntries := idx.entries[indexPath]
-		inDir := idx.IsDir(indexPath)
-		if !inEntries && !inDir {
-			return ErrRemoveIndexPathNotFound
-		}
-
-		if !opts.Recursive && idx.IsDir(indexPath) {
+		if !opts.Recursive && idx.IsDir(p) {
 			return ErrRecursiveOptionRequired
 		}
 
-		idx.RemovePath(indexPath, removedPaths)
+		if err := idx.AddOrRemovePath(p, IndexActionRm, removedPaths); err != nil {
+			return err
+		}
 	}
 
 	// safety check
@@ -514,19 +507,25 @@ func (repo *Repo) objectToFile(path string, te TreeEntry) error {
 		return nil
 
 	case ModeObjectTypeSymlink:
-		obj, err := repo.NewObject(oidHex, false)
-		if err != nil {
-			return err
+		if runtime.GOOS == "windows" {
+			// Windows requires special privileges for symlinks,
+			// so write the symlink target as a regular file instead.
+			return repo.objectToFile(path, TreeEntry{OID: te.OID, Mode: Mode(0o100644)})
+		} else {
+			os.Remove(fullPath)
+			obj, err := repo.NewObject(oidHex, false)
+			if err != nil {
+				return err
+			}
+			defer obj.Close()
+			data := make([]byte, obj.Size)
+			n, err := obj.reader.Read(data)
+			if err != nil && err.Error() != "EOF" {
+				return err
+			}
+			data = data[:n]
+			return os.Symlink(string(data), fullPath)
 		}
-		defer obj.Close()
-		data := make([]byte, obj.Size)
-		n, err := obj.reader.Read(data)
-		if err != nil && err.Error() != "EOF" {
-			return err
-		}
-		data = data[:n]
-		os.Remove(fullPath)
-		return os.Symlink(string(data), fullPath)
 
 	case ModeObjectTypeGitlink:
 		return fmt.Errorf("submodules not supported")
@@ -623,6 +622,116 @@ type SwitchResult struct {
 	Conflict *SwitchConflict
 }
 
+// migrate applies tree diff changes to the index and optionally the work dir.
+// If result is non-nil, conflicts are checked and recorded rather than applied.
+func (repo *Repo) migrate(changes map[string]TreeChange, idx *Index, updateWorkDir bool, result *SwitchResult) error {
+	addFiles := make(map[string]TreeEntry)
+	removeFiles := make(map[string]bool)
+
+	for path, change := range changes {
+		if change.Old == nil {
+			if change.New != nil {
+				addFiles[path] = *change.New
+			}
+		} else if change.New == nil {
+			removeFiles[path] = true
+		} else {
+			if change.New != nil {
+				addFiles[path] = *change.New
+			}
+		}
+
+		// check for conflicts
+		if result != nil {
+			entries, inIndex := idx.entries[path]
+			var indexEntry *IndexEntry
+			if inIndex {
+				indexEntry = entries[0]
+			}
+
+			oldDiffersFromIndex := treeEntryDiffersFromIndex(change.Old, indexEntry)
+			newDiffersFromIndex := treeEntryDiffersFromIndex(change.New, indexEntry)
+			if oldDiffersFromIndex && newDiffersFromIndex {
+				result.Conflict.StaleFiles = append(result.Conflict.StaleFiles, path)
+				continue
+			}
+
+			fullPath := filepath.Join(repo.workPath, path)
+			info, statErr := os.Lstat(fullPath)
+			if statErr != nil {
+				if repo.hasUntrackedParent(path, idx) {
+					if indexEntry != nil {
+						result.Conflict.StaleFiles = append(result.Conflict.StaleFiles, path)
+					} else if change.New != nil {
+						result.Conflict.UntrackedOverwritten = append(result.Conflict.UntrackedOverwritten, path)
+					} else {
+						result.Conflict.UntrackedRemoved = append(result.Conflict.UntrackedRemoved, path)
+					}
+				}
+				continue
+			}
+
+			if info.IsDir() {
+				hasUntracked := repo.hasUntrackedDescendant(fullPath, idx)
+				if hasUntracked {
+					if indexEntry != nil {
+						result.Conflict.StaleFiles = append(result.Conflict.StaleFiles, path)
+					} else {
+						result.Conflict.StaleDirs = append(result.Conflict.StaleDirs, path)
+					}
+				}
+			} else {
+				if indexEntry != nil {
+					differs, err := repo.indexDiffersFromWorkDir(indexEntry, fullPath)
+					if err == nil && differs {
+						result.Conflict.StaleFiles = append(result.Conflict.StaleFiles, path)
+					}
+				} else {
+					if change.New != nil {
+						result.Conflict.UntrackedOverwritten = append(result.Conflict.UntrackedOverwritten, path)
+					} else {
+						result.Conflict.UntrackedRemoved = append(result.Conflict.UntrackedRemoved, path)
+					}
+				}
+			}
+		}
+	}
+
+	if result != nil && result.hasConflict() {
+		return nil
+	}
+
+	// apply removals
+	for path := range removeFiles {
+		if updateWorkDir {
+			fullPath := filepath.Join(repo.workPath, path)
+			os.Remove(fullPath)
+			dir := filepath.Dir(fullPath)
+			for dir != repo.workPath {
+				if err := os.Remove(dir); err != nil {
+					break
+				}
+				dir = filepath.Dir(dir)
+			}
+		}
+		idx.RemovePath(path, nil)
+	}
+
+	// apply additions and edits
+	for path, te := range addFiles {
+		if updateWorkDir {
+			if err := repo.objectToFile(path, te); err != nil {
+				return err
+			}
+		}
+		if err := idx.AddPath(path, &te); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // switchDir switches the working directory, index, and HEAD to a new target.
 func (repo *Repo) switchDir(input SwitchInput) (*SwitchResult, error) {
 	// resolve current OID
@@ -650,51 +759,19 @@ func (repo *Repo) switchDir(input SwitchInput) (*SwitchResult, error) {
 	}
 
 	// check for conflicts (unless force)
+	var result *SwitchResult
 	if !input.Force {
-		conflict := repo.checkSwitchConflicts(changes, idx)
-		if conflict != nil {
-			return &SwitchResult{Conflict: conflict}, nil
+		result = &SwitchResult{
+			Conflict: &SwitchConflict{},
 		}
 	}
 
-	// apply removals
-	for path, change := range changes {
-		if change.New == nil {
-			// remove from work dir
-			if input.UpdateWorkDir {
-				fullPath := filepath.Join(repo.workPath, path)
-				os.Remove(fullPath)
-				dir := filepath.Dir(fullPath)
-				for dir != repo.workPath {
-					if err := os.Remove(dir); err != nil {
-						break
-					}
-					dir = filepath.Dir(dir)
-				}
-			}
-			// remove from index
-			idx.RemovePath(path, nil)
-		}
+	if err := repo.migrate(changes, idx, input.UpdateWorkDir, result); err != nil {
+		return nil, err
 	}
 
-	// apply additions and edits
-	for path, change := range changes {
-		if change.New != nil {
-			// write file to work dir
-			if input.UpdateWorkDir {
-				if err := repo.objectToFile(path, *change.New); err != nil {
-					return nil, err
-				}
-			}
-			// update index
-			entry := &IndexEntry{
-				mode:  change.New.Mode,
-				oid:   change.New.OID,
-				flags: uint16(len(path)) & 0xFFF,
-				path:  path,
-			}
-			idx.addEntry(entry)
-		}
+	if result != nil && result.hasConflict() {
+		return result, nil
 	}
 
 	// write index
@@ -724,78 +801,12 @@ func (repo *Repo) switchDir(input SwitchInput) (*SwitchResult, error) {
 	return &SwitchResult{Success: true}, nil
 }
 
-// checkSwitchConflicts checks if switching would overwrite uncommitted changes.
-func (repo *Repo) checkSwitchConflicts(changes map[string]TreeChange, idx *Index) *SwitchConflict {
-	var staleFiles, staleDirs, untrackedOverwritten, untrackedRemoved []string
-
-	for path, change := range changes {
-		entries, inIndex := idx.entries[path]
-		var indexEntry *IndexEntry
-		if inIndex {
-			indexEntry = entries[0]
-		}
-
-		// check if both old and new tree differ from the index
-		oldDiffersFromIndex := treeEntryDiffersFromIndex(change.Old, indexEntry)
-		newDiffersFromIndex := treeEntryDiffersFromIndex(change.New, indexEntry)
-		if oldDiffersFromIndex && newDiffersFromIndex {
-			staleFiles = append(staleFiles, path)
-			continue
-		}
-
-		fullPath := filepath.Join(repo.workPath, path)
-		info, statErr := os.Lstat(fullPath)
-		if statErr != nil {
-			// file doesn't exist — check if an untracked parent is blocking
-			if repo.hasUntrackedParent(path, idx) {
-				if indexEntry != nil {
-					staleFiles = append(staleFiles, path)
-				} else if change.New != nil {
-					untrackedOverwritten = append(untrackedOverwritten, path)
-				} else {
-					untrackedRemoved = append(untrackedRemoved, path)
-				}
-			}
-			continue
-		}
-
-		if info.IsDir() {
-			// directory where a file is expected — check if it has untracked descendants
-			hasUntracked := repo.hasUntrackedDescendant(fullPath, idx)
-			if hasUntracked {
-				if indexEntry != nil {
-					staleFiles = append(staleFiles, path)
-				} else {
-					staleDirs = append(staleDirs, path)
-				}
-			}
-		} else {
-			// check if work dir differs from index
-			if indexEntry != nil {
-				differs, err := repo.indexDiffersFromWorkDir(indexEntry, fullPath)
-				if err == nil && differs {
-					staleFiles = append(staleFiles, path)
-				}
-			} else {
-				// untracked file would be overwritten or removed
-				if change.New != nil {
-					untrackedOverwritten = append(untrackedOverwritten, path)
-				} else {
-					untrackedRemoved = append(untrackedRemoved, path)
-				}
-			}
-		}
+func (r *SwitchResult) hasConflict() bool {
+	if r.Conflict == nil {
+		return false
 	}
-
-	if len(staleFiles) > 0 || len(staleDirs) > 0 || len(untrackedOverwritten) > 0 || len(untrackedRemoved) > 0 {
-		return &SwitchConflict{
-			StaleFiles:           staleFiles,
-			StaleDirs:            staleDirs,
-			UntrackedOverwritten: untrackedOverwritten,
-			UntrackedRemoved:     untrackedRemoved,
-		}
-	}
-	return nil
+	c := r.Conflict
+	return len(c.StaleFiles) > 0 || len(c.StaleDirs) > 0 || len(c.UntrackedOverwritten) > 0 || len(c.UntrackedRemoved) > 0
 }
 
 // restore restores a file or directory in the work dir from the HEAD tree.
