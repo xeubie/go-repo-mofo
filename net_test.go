@@ -534,7 +534,7 @@ func testFetch(t *testing.T, server testServer, tempDir string) {
 
 func TestPushHTTP(t *testing.T) {
 	tempDir := t.TempDir()
-	testPush(t, newHTTPServer(3028, tempDir), tempDir)
+	testPush(t, newHTTPServer(3028, tempDir), tempDir, "")
 }
 
 func TestPushRaw(t *testing.T) {
@@ -542,7 +542,7 @@ func TestPushRaw(t *testing.T) {
 		t.Skip("raw transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testPush(t, newRawServer(3029, tempDir), tempDir)
+	testPush(t, newRawServer(3029, tempDir), tempDir, "")
 }
 
 func TestPushSSH(t *testing.T) {
@@ -550,10 +550,20 @@ func TestPushSSH(t *testing.T) {
 		t.Skip("ssh transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testPush(t, newSSHServer(3030, tempDir), tempDir)
+
+	// build the repomofo binary
+	binPath := filepath.Join(tempDir, "repomofo")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/repomofo")
+	buildCmd.Dir = "."
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build repomofo binary failed: %v\n%s", err, out)
+	}
+
+	receivePackCmd := binPath + " receive-pack"
+	testPush(t, newSSHServer(3030, tempDir), tempDir, receivePackCmd)
 }
 
-func testPush(t *testing.T, server testServer, tempDir string) {
+func testPush(t *testing.T, server testServer, tempDir string, receivePackCmd string) {
 	server.start(t)
 	defer server.stop()
 
@@ -589,7 +599,11 @@ func testPush(t *testing.T, server testServer, tempDir string) {
 	runGit(t, clientPath, "config", "branch.master.remote", "origin")
 
 	// push
-	runGitOnServer(t, server, clientPath, "push", "origin", "master")
+	if receivePackCmd != "" {
+		runGitOnServer(t, server, clientPath, "push", "--receive-pack", receivePackCmd, "origin", "master")
+	} else {
+		runGitOnServer(t, server, clientPath, "push", "origin", "master")
+	}
 
 	// verify push was successful
 	serverHead := gitRevParse(t, serverPath, "HEAD")

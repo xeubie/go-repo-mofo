@@ -3,6 +3,7 @@ package repomofo
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -427,8 +428,43 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		case ConfigRemove:
 			return repo.RemoveRemote(cmd.Remote.Name)
 		}
+	case CommandReceivePack:
+		dir, err := filepath.Abs(cmd.ReceivePack.Dir)
+		if err != nil {
+			return err
+		}
+		repo, err := OpenRepo(dir, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		options := cmd.ReceivePack.Options
+		options.ProtocolVersion = detectProtocolVersion()
+		return repo.ReceivePack(os.Stdin, os.Stdout, options)
 	}
 	return fmt.Errorf("unknown command")
+}
+
+func detectProtocolVersion() int {
+	gitProtocol := os.Getenv("GIT_PROTOCOL")
+	if gitProtocol == "" {
+		return 0
+	}
+	version := 0
+	for _, entry := range strings.Split(gitProtocol, ":") {
+		value := strings.TrimLeft(entry, " ")
+		if strings.HasPrefix(value, "version=") {
+			v := value[len("version="):]
+			switch v {
+			case "2":
+				version = 2
+			case "1":
+				if version != 2 {
+					version = 1
+				}
+			}
+		}
+	}
+	return version
 }
 
 func sortedKeys(m map[string]bool) []string {

@@ -26,6 +26,7 @@ const (
 	CommandLog
 	CommandConfig
 	CommandRemote
+	CommandReceivePack
 )
 
 var commandNames = map[CommandKind]string{
@@ -45,7 +46,8 @@ var commandNames = map[CommandKind]string{
 	CommandRestore:   "restore",
 	CommandLog:       "log",
 	CommandConfig:    "config",
-	CommandRemote:    "remote",
+	CommandRemote:      "remote",
+	CommandReceivePack: "receive-pack",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -65,7 +67,8 @@ var commandDescrips = map[CommandKind]string{
 	CommandRestore:   "restore files in the work dir.",
 	CommandLog:       "show commit logs.",
 	CommandConfig:    "add, remove, and list config options.",
-	CommandRemote:    "add, remove, and list remotes.",
+	CommandRemote:      "add, remove, and list remotes.",
+	CommandReceivePack: "receive what is pushed into the repository.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -125,6 +128,7 @@ remove remote:
     repomofo remote rm origin
 list remotes:
     repomofo remote list`,
+	CommandReceivePack: `repomofo receive-pack <directory>`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -290,22 +294,28 @@ type ResetAddCommand struct {
 	Target RefOrOid // OID only
 }
 
+type ReceivePackCommand struct {
+	Dir     string
+	Options ReceivePackOptions
+}
+
 type Command struct {
-	Kind     CommandKind
-	Init     *InitCommand
-	Add      *AddCommand
-	Unadd    *UnaddCommand
-	Untrack  *UntrackCommand
-	Rm       *RmCommand
-	Commit   *CommitCommand
-	Tag      *TagCommand
-	Branch   *BranchCommand
-	Switch   *SwitchCommand
-	ResetAdd *ResetAddCommand
-	Restore  *RestoreCommand
-	Log      *LogCommand
-	Config   *ConfigCommand
-	Remote   *ConfigCommand
+	Kind        CommandKind
+	Init        *InitCommand
+	Add         *AddCommand
+	Unadd       *UnaddCommand
+	Untrack     *UntrackCommand
+	Rm          *RmCommand
+	Commit      *CommitCommand
+	Tag         *TagCommand
+	Branch      *BranchCommand
+	Switch      *SwitchCommand
+	ResetAdd    *ResetAddCommand
+	Restore     *RestoreCommand
+	Log         *LogCommand
+	Config      *ConfigCommand
+	Remote      *ConfigCommand
+	ReceivePack *ReceivePackCommand
 }
 
 type RestoreCommand struct {
@@ -540,6 +550,19 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 		}
 		return &Command{Kind: CommandLog, Log: &LogCommand{Targets: targets}}
 
+	case CommandReceivePack:
+		if len(cmdArgs.PositionalArgs) != 1 {
+			return nil
+		}
+		return &Command{Kind: CommandReceivePack, ReceivePack: &ReceivePackCommand{
+			Dir: cmdArgs.PositionalArgs[0],
+			Options: ReceivePackOptions{
+				SkipConnectivityCheck: cmdArgs.Contains("--skip-connectivity-check"),
+				AdvertiseRefs:         cmdArgs.Contains("--http-backend-info-refs"),
+				IsStateless:           cmdArgs.Contains("--stateless-rpc"),
+			},
+		}}
+
 	case CommandConfig, CommandRemote:
 		if len(cmdArgs.PositionalArgs) == 0 {
 			return nil
@@ -665,7 +688,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repomofo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandRemote; kind++ {
+		for kind := CommandInit; kind <= CommandReceivePack; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}

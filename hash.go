@@ -14,6 +14,16 @@ const (
 	SHA256Hash
 )
 
+func (h HashKind) Name() string {
+	switch h {
+	case SHA1Hash:
+		return "sha1"
+	case SHA256Hash:
+		return "sha256"
+	}
+	panic("invalid hash kind")
+}
+
 func (h HashKind) ByteLen() int {
 	switch h {
 	case SHA1Hash:
