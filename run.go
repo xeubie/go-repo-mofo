@@ -13,16 +13,16 @@ type RunOpts struct {
 }
 
 var (
-	ErrRepoNotFound                            = fmt.Errorf("repo not found")
-	ErrRepoAlreadyExists                       = fmt.Errorf("repo already exists")
-	ErrHandled                                 = fmt.Errorf("handled error")
-	ErrAddIndexPathNotFound                    = fmt.Errorf("add index path not found")
-	ErrRemoveIndexPathNotFound                 = fmt.Errorf("remove index path not found")
-	ErrRecursiveOptionRequired                 = fmt.Errorf("recursive option required")
+	ErrRepoNotFound                                 = fmt.Errorf("repo not found")
+	ErrRepoAlreadyExists                            = fmt.Errorf("repo already exists")
+	ErrHandled                                      = fmt.Errorf("handled error")
+	ErrAddIndexPathNotFound                         = fmt.Errorf("add index path not found")
+	ErrRemoveIndexPathNotFound                      = fmt.Errorf("remove index path not found")
+	ErrRecursiveOptionRequired                      = fmt.Errorf("recursive option required")
 	ErrCannotRemoveFileWithStagedAndUnstagedChanges = fmt.Errorf("cannot remove file with staged and unstaged changes")
-	ErrCannotRemoveFileWithStagedChanges       = fmt.Errorf("cannot remove file with staged changes")
-	ErrCannotRemoveFileWithUnstagedChanges     = fmt.Errorf("cannot remove file with unstaged changes")
-	ErrInvalidSwitchTarget                     = fmt.Errorf("invalid switch target")
+	ErrCannotRemoveFileWithStagedChanges            = fmt.Errorf("cannot remove file with staged changes")
+	ErrCannotRemoveFileWithUnstagedChanges          = fmt.Errorf("cannot remove file with unstaged changes")
+	ErrInvalidSwitchTarget                          = fmt.Errorf("invalid switch target")
 )
 
 func Run(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
@@ -95,11 +95,10 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return err
 		}
-		repo, err := InitRepo(workPath, opts)
+		_, err = InitRepo(workPath, opts)
 		if err != nil {
 			return err
 		}
-		defer repo.Close()
 
 		fmt.Fprintf(runOpts.Out,
 			"congrats, you just created a new repo! aren't you special.\n"+
@@ -113,7 +112,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		return repo.Add(cmd.Add.Paths)
 
 	case CommandUnadd:
@@ -121,7 +119,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		return repo.Unadd(cmd.Unadd.Paths, cmd.Unadd.Opts)
 
 	case CommandUntrack:
@@ -129,7 +126,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		return repo.Untrack(cmd.Untrack.Paths, cmd.Untrack.Force, cmd.Untrack.Recursive)
 
 	case CommandRm:
@@ -137,7 +133,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		return repo.Remove(cmd.Rm.Paths, cmd.Rm.Opts)
 
 	case CommandCommit:
@@ -145,9 +140,8 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		_, err = repo.Commit(CommitMetadata{
-			Message: cmd.Commit.Message,
+			Message:    cmd.Commit.Message,
 			AllowEmpty: cmd.Commit.AllowEmpty,
 		})
 		return err
@@ -157,7 +151,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 
 		switch cmd.Tag.SubKind {
 		case TagList:
@@ -192,7 +185,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 
 		head, err := repo.Head()
 		if err == nil {
@@ -233,7 +225,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 
 		switch cmd.Branch.SubKind {
 		case BranchList:
@@ -283,7 +274,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 
 		result, err := repo.Switch(SwitchInput{
 			Kind:          kind,
@@ -318,7 +308,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		return repo.ResetAdd(cmd.ResetAdd.Target)
 
 	case CommandRestore:
@@ -326,7 +315,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 		return repo.Restore(cmd.Restore.Path)
 
 	case CommandConfig:
@@ -334,7 +322,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 
 		switch cmd.Config.SubKind {
 		case ConfigList:
@@ -363,7 +350,6 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		defer repo.Close()
 
 		switch cmd.Remote.SubKind {
 		case ConfigList:

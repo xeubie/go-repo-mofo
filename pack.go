@@ -185,9 +185,9 @@ type packObjectStream struct {
 	zlibReader io.ReadCloser
 
 	// memory mode (small objects read into RAM)
-	memBuf   []byte
-	memPos   int
-	isMem    bool
+	memBuf []byte
+	memPos int
+	isMem  bool
 }
 
 func newPackObjectStream(orig PackReader, startPos uint64) (*packObjectStream, error) {
@@ -362,7 +362,7 @@ const (
 type deltaChunkKind int
 
 const (
-	deltaAddNew       deltaChunkKind = iota
+	deltaAddNew deltaChunkKind = iota
 	deltaCopyFromBase
 )
 
@@ -516,7 +516,7 @@ func initPackObjectReaderAtPosition(pr PackReader, position uint64) (*PackObject
 
 	case packRefDelta:
 		var oidBuf [32]byte // max hash size
-		hashByteLen := 20 // SHA-1
+		hashByteLen := 20   // SHA-1
 		if _, err := io.ReadFull(pr, oidBuf[:hashByteLen]); err != nil {
 			return nil, err
 		}
@@ -949,7 +949,7 @@ type LooseObjectReader struct {
 }
 
 func openLooseObject(repo *Repo, oidHex string) (*LooseObjectReader, error) {
-	objPath := filepath.Join(repo.repoDir, "objects", oidHex[:2], oidHex[2:])
+	objPath := filepath.Join(repo.repoPath, "objects", oidHex[:2], oidHex[2:])
 	f, err := os.Open(objPath)
 	if err != nil {
 		return nil, err
@@ -1324,7 +1324,7 @@ func (pw *PackWriter) writeObjectHeader() {
 // ---------------------------------------------------------------------------
 
 func newPackObjectReaderFromIndex(repo *Repo, oidHex string) (*PackObjectReader, error) {
-	packDir := filepath.Join(repo.repoDir, "objects", "pack")
+	packDir := filepath.Join(repo.repoPath, "objects", "pack")
 	offset, packID, err := searchPackIndexes(repo.opts.Hash, packDir, oidHex, repo.opts.bufferSize())
 	if err != nil {
 		return nil, err

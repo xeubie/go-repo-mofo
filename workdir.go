@@ -9,12 +9,12 @@ import (
 
 // Status represents the current status of the working directory and index.
 type Status struct {
-	Untracked      map[string]bool
+	Untracked       map[string]bool
 	WorkDirModified map[string]bool
-	WorkDirDeleted map[string]bool
-	IndexAdded     map[string]bool
-	IndexModified  map[string]bool
-	IndexDeleted   map[string]bool
+	WorkDirDeleted  map[string]bool
+	IndexAdded      map[string]bool
+	IndexModified   map[string]bool
+	IndexDeleted    map[string]bool
 }
 
 func (repo *Repo) status() (*Status, error) {
@@ -165,8 +165,8 @@ type UnaddOptions struct {
 }
 
 type RemoveOptions struct {
-	Force        bool
-	Recursive    bool
+	Force         bool
+	Recursive     bool
 	UpdateWorkDir bool
 }
 
@@ -216,7 +216,7 @@ func (repo *Repo) addPaths(paths []string) error {
 		}
 	}
 
-	lock, err := NewLockFile(repo.repoDir, "index")
+	lock, err := NewLockFile(repo.repoPath, "index")
 	if err != nil {
 		return err
 	}
@@ -254,7 +254,7 @@ func (repo *Repo) unaddPaths(paths []string, opts UnaddOptions) error {
 		}
 	}
 
-	lock, err := NewLockFile(repo.repoDir, "index")
+	lock, err := NewLockFile(repo.repoPath, "index")
 	if err != nil {
 		return err
 	}
@@ -359,7 +359,7 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 		}
 	}
 
-	lock, err := NewLockFile(repo.repoDir, "index")
+	lock, err := NewLockFile(repo.repoPath, "index")
 	if err != nil {
 		return err
 	}
@@ -600,18 +600,18 @@ const (
 
 // SwitchInput holds the parameters for a switch/reset operation.
 type SwitchInput struct {
-	Kind         SwitchKind
-	Target       RefOrOid // the branch or OID to switch to
+	Kind          SwitchKind
+	Target        RefOrOid // the branch or OID to switch to
 	UpdateWorkDir bool
-	Force        bool
+	Force         bool
 }
 
 // SwitchConflict holds paths that conflict with the switch.
 type SwitchConflict struct {
-	StaleFiles            []string
-	StaleDirs             []string
-	UntrackedOverwritten  []string
-	UntrackedRemoved      []string
+	StaleFiles           []string
+	StaleDirs            []string
+	UntrackedOverwritten []string
+	UntrackedRemoved     []string
 }
 
 // SwitchResult is the outcome of a switch operation.
@@ -695,7 +695,7 @@ func (repo *Repo) switchDir(input SwitchInput) (*SwitchResult, error) {
 	}
 
 	// write index
-	lock, err := NewLockFile(repo.repoDir, "index")
+	lock, err := NewLockFile(repo.repoPath, "index")
 	if err != nil {
 		return nil, err
 	}

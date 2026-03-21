@@ -63,11 +63,10 @@ func TestRun(t *testing.T) {
 	}
 
 	// verify we can open the repo
-	repo, err := OpenRepo(workPath, opts)
+	_, err = OpenRepo(workPath, opts)
 	if err != nil {
 		t.Fatalf("open repo failed: %v", err)
 	}
-	repo.Close()
 
 	helloTxtContent := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19"
 
@@ -104,7 +103,6 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open repo failed: %v", err)
 		}
-		defer repo.Close()
 
 		headOID, err := repo.ReadHeadRecurMaybe()
 		if err != nil {
@@ -147,7 +145,6 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open repo failed: %v", err)
 		}
-		defer repo.Close()
 
 		oidBytes, err := repo.writeBlob(readmeContent)
 		if err != nil {
@@ -191,7 +188,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		commit1, err = repo.ReadHeadRecurMaybe()
-		repo.Close()
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
@@ -287,7 +283,6 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open repo failed: %v", err)
 		}
-		defer repo.Close()
 
 		commit2, err = repo.ReadHeadRecurMaybe()
 		if err != nil {
@@ -334,7 +329,6 @@ func TestRun(t *testing.T) {
 				Target:        RefOrOid{OID: commit1},
 				UpdateWorkDir: true,
 			})
-			repo.Close()
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
 			}
@@ -366,7 +360,6 @@ func TestRun(t *testing.T) {
 				Target:        RefOrOid{OID: commit1},
 				UpdateWorkDir: true,
 			})
-			repo.Close()
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
 			}
@@ -390,7 +383,6 @@ func TestRun(t *testing.T) {
 				Target:        RefOrOid{OID: commit1},
 				UpdateWorkDir: true,
 			})
-			repo.Close()
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
 			}
@@ -422,7 +414,6 @@ func TestRun(t *testing.T) {
 				Target:        RefOrOid{OID: commit1},
 				UpdateWorkDir: true,
 			})
-			repo.Close()
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
 			}
@@ -513,7 +504,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			idx, err := repo.readIndex()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("read index failed: %v", err)
 			}
@@ -554,7 +544,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			idx, err := repo.readIndex()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("read index failed: %v", err)
 			}
@@ -591,7 +580,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Add([]string{"no-such-file"})
-			repo.Close()
 			if err != ErrAddIndexPathNotFound {
 				t.Fatalf("expected ErrAddIndexPathNotFound, got %v", err)
 			}
@@ -604,7 +592,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Remove([]string{"no-such-file"}, RemoveOptions{UpdateWorkDir: true})
-			repo.Close()
 			if err != ErrRemoveIndexPathNotFound {
 				t.Fatalf("expected ErrRemoveIndexPathNotFound, got %v", err)
 			}
@@ -620,7 +607,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{UpdateWorkDir: true})
-			repo.Close()
 			if err != ErrCannotRemoveFileWithUnstagedChanges {
 				t.Fatalf("expected ErrCannotRemoveFileWithUnstagedChanges, got %v", err)
 			}
@@ -642,7 +628,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Untrack([]string{"one/two/three.txt"}, false, false)
-			repo.Close()
 			if err != ErrCannotRemoveFileWithStagedAndUnstagedChanges {
 				t.Fatalf("expected ErrCannotRemoveFileWithStagedAndUnstagedChanges, got %v", err)
 			}
@@ -661,7 +646,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Untrack([]string{"one"}, false, false)
-			repo.Close()
 			if err != ErrRecursiveOptionRequired {
 				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
 			}
@@ -674,7 +658,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Unadd([]string{"one"}, UnaddOptions{Recursive: false})
-			repo.Close()
 			if err != ErrRecursiveOptionRequired {
 				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
 			}
@@ -693,7 +676,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			idx, err := repo.readIndex()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("read index failed: %v", err)
 			}
@@ -720,7 +702,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			idx, err := repo.readIndex()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("read index failed: %v", err)
 			}
@@ -743,7 +724,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{UpdateWorkDir: true})
-			repo.Close()
 			if err != ErrCannotRemoveFileWithStagedChanges {
 				t.Fatalf("expected ErrCannotRemoveFileWithStagedChanges, got %v", err)
 			}
@@ -811,7 +791,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			st, err := repo.Status()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("status failed: %v", err)
 			}
@@ -868,7 +847,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			st, err := repo.Status()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("status failed: %v", err)
 			}
@@ -911,7 +889,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			st, err := repo.Status()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("status failed: %v", err)
 			}
@@ -958,7 +935,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			st, err := repo.Status()
-			repo.Close()
 			if err != nil {
 				t.Fatalf("status failed: %v", err)
 			}
@@ -977,7 +953,6 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open repo failed: %v", err)
 		}
-		defer repo.Close()
 
 		// read commit
 		commitObj, err := repo.NewObject(commit2, true)
@@ -1017,7 +992,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Remove([]string{"foo/bar/hi.txt"}, RemoveOptions{UpdateWorkDir: true})
-			repo.Close()
 			if err != ErrRemoveIndexPathNotFound {
 				t.Fatalf("expected ErrRemoveIndexPathNotFound, got %v", err)
 			}
@@ -1048,7 +1022,6 @@ func TestRun(t *testing.T) {
 				t.Fatalf("open repo failed: %v", err)
 			}
 			err = repo.Remove([]string{"foo"}, RemoveOptions{UpdateWorkDir: true})
-			repo.Close()
 			if err != ErrRecursiveOptionRequired {
 				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
 			}
@@ -1084,7 +1057,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		commit3, err = repo.ReadHeadRecurMaybe()
-		repo.Close()
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
@@ -1111,7 +1083,6 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open repo failed: %v", err)
 		}
-		defer repo.Close()
 
 		headOID, err := repo.ReadHeadRecurMaybe()
 		if err != nil {
@@ -1137,7 +1108,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		iter, err := repo.listBranches()
-		repo.Close()
 		if err != nil {
 			t.Fatalf("list branches failed: %v", err)
 		}
@@ -1165,7 +1135,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		head, err := repo.Head()
-		repo.Close()
 		if err != nil {
 			t.Fatalf("head failed: %v", err)
 		}
@@ -1184,7 +1153,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		err = repo.removeBranch(RemoveBranchInput{Name: "stuff"})
-		repo.Close()
 		if err != ErrCannotDeleteCurrentBranch {
 			t.Fatalf("expected ErrCannotDeleteCurrentBranch, got %v", err)
 		}
@@ -1229,7 +1197,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		commit4Stuff, err = repo.ReadHeadRecurMaybe()
-		repo.Close()
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
@@ -1260,7 +1227,6 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 		iter, err := repo.listBranches()
-		repo.Close()
 		if err != nil {
 			t.Fatalf("list branches failed: %v", err)
 		}

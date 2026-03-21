@@ -43,7 +43,7 @@ func (repo *Repo) addTag(input AddTagInput) (string, error) {
 }
 
 func (repo *Repo) removeTag(input RemoveTagInput) error {
-	tagsDir := filepath.Join(repo.repoDir, "refs", "tags")
+	tagsDir := filepath.Join(repo.repoPath, "refs", "tags")
 
 	if err := os.Remove(filepath.Join(tagsDir, input.Name)); err != nil {
 		return err
@@ -62,6 +62,6 @@ func (repo *Repo) removeTag(input RemoveTagInput) error {
 }
 
 func (repo *Repo) listTags() (*RefIterator, error) {
-	tagsDir := filepath.Join(repo.repoDir, "refs", "tags")
+	tagsDir := filepath.Join(repo.repoPath, "refs", "tags")
 	return newRefIterator(tagsDir, RefTag)
 }

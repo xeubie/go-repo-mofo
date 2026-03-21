@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	ErrBranchAlreadyExists      = errors.New("branch already exists")
+	ErrBranchAlreadyExists       = errors.New("branch already exists")
 	ErrCannotDeleteCurrentBranch = errors.New("cannot delete current branch")
 )
 
@@ -36,11 +36,11 @@ func (repo *Repo) addBranch(input AddBranchInput) error {
 		return ErrBranchAlreadyExists
 	}
 
-	branchPath := filepath.Join(repo.repoDir, "refs", "heads", input.Name)
+	branchPath := filepath.Join(repo.repoPath, "refs", "heads", input.Name)
 	if err := os.MkdirAll(filepath.Dir(branchPath), 0755); err != nil {
 		return err
 	}
-	headsDir := filepath.Join(repo.repoDir, "refs", "heads")
+	headsDir := filepath.Join(repo.repoPath, "refs", "heads")
 
 	oidHex, _ := repo.ReadHeadRecurMaybe()
 
@@ -69,7 +69,7 @@ func (repo *Repo) removeBranch(input RemoveBranchInput) error {
 		}
 	}
 
-	headsDir := filepath.Join(repo.repoDir, "refs", "heads")
+	headsDir := filepath.Join(repo.repoPath, "refs", "heads")
 
 	if err := os.Remove(filepath.Join(headsDir, input.Name)); err != nil {
 		return err
@@ -88,7 +88,7 @@ func (repo *Repo) removeBranch(input RemoveBranchInput) error {
 }
 
 func (repo *Repo) listBranches() (*RefIterator, error) {
-	headsDir := filepath.Join(repo.repoDir, "refs", "heads")
+	headsDir := filepath.Join(repo.repoPath, "refs", "heads")
 	return newRefIterator(headsDir, RefHead)
 }
 

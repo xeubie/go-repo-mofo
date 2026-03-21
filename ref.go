@@ -229,7 +229,7 @@ func (it *RefIterator) Close() {
 
 // readRef reads a ref from the repo dir.
 func (repo *Repo) readRef(refPath string) (*RefOrOid, error) {
-	filePath := filepath.Join(repo.repoDir, refPath)
+	filePath := filepath.Join(repo.repoPath, refPath)
 	data, err := os.ReadFile(filePath)
 	if err == nil {
 		content := strings.TrimRight(string(data), "\n\r")
@@ -241,7 +241,7 @@ func (repo *Repo) readRef(refPath string) (*RefOrOid, error) {
 	}
 
 	// look for packed refs
-	packedRefsPath := filepath.Join(repo.repoDir, "packed-refs")
+	packedRefsPath := filepath.Join(repo.repoPath, "packed-refs")
 	packedData, err := os.ReadFile(packedRefsPath)
 	if err == nil {
 		lines := strings.Split(string(packedData), "\n")
@@ -326,7 +326,7 @@ func (repo *Repo) ReadRef(ref Ref) (string, error) {
 
 // writeRef writes a ref (OID or symbolic ref) to the repo.
 func (repo *Repo) writeRef(refPath string, refOrOid RefOrOid) error {
-	fullPath := filepath.Join(repo.repoDir, refPath)
+	fullPath := filepath.Join(repo.repoPath, refPath)
 	parentDir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return err
@@ -339,7 +339,7 @@ func (repo *Repo) writeRef(refPath string, refOrOid RefOrOid) error {
 		content = refOrOid.OID
 	}
 
-	lock, err := NewLockFile(repo.repoDir, refPath)
+	lock, err := NewLockFile(repo.repoPath, refPath)
 	if err != nil {
 		return err
 	}

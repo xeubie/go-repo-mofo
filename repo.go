@@ -23,7 +23,7 @@ func (o RepoOpts) bufferSize() int {
 type Repo struct {
 	opts     RepoOpts
 	workPath string
-	repoDir  string
+	repoPath string
 }
 
 func InitRepo(workPath string, opts RepoOpts) (*Repo, error) {
@@ -59,7 +59,7 @@ func InitRepo(workPath string, opts RepoOpts) (*Repo, error) {
 	repo := &Repo{
 		opts:     opts,
 		workPath: workPath,
-		repoDir:  gitDir,
+		repoPath: gitDir,
 	}
 
 	// create default branch "master"
@@ -83,7 +83,7 @@ func OpenRepo(workPath string, opts RepoOpts) (*Repo, error) {
 	for {
 		gitDir := filepath.Join(dir, ".git")
 		if _, err := os.Stat(gitDir); err == nil {
-			return &Repo{opts: opts, workPath: dir, repoDir: gitDir}, nil
+			return &Repo{opts: opts, workPath: dir, repoPath: gitDir}, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -91,10 +91,6 @@ func OpenRepo(workPath string, opts RepoOpts) (*Repo, error) {
 		}
 		dir = parent
 	}
-}
-
-func (r *Repo) Close() error {
-	return nil
 }
 
 func (r *Repo) AddConfig(input AddConfigInput) error {
@@ -107,7 +103,7 @@ func (r *Repo) AddConfig(input AddConfigInput) error {
 		return err
 	}
 
-	lock, err := NewLockFile(r.repoDir, "config")
+	lock, err := NewLockFile(r.repoPath, "config")
 	if err != nil {
 		return err
 	}
@@ -131,7 +127,7 @@ func (r *Repo) RemoveConfig(input RemoveConfigInput) error {
 		return err
 	}
 
-	lock, err := NewLockFile(r.repoDir, "config")
+	lock, err := NewLockFile(r.repoPath, "config")
 	if err != nil {
 		return err
 	}
@@ -169,7 +165,7 @@ func (r *Repo) AddRemote(name, url string) error {
 		return err
 	}
 
-	lock, err := NewLockFile(r.repoDir, "config")
+	lock, err := NewLockFile(r.repoPath, "config")
 	if err != nil {
 		return err
 	}
@@ -201,7 +197,7 @@ func (r *Repo) RemoveRemote(name string) error {
 		return err
 	}
 
-	lock, err := NewLockFile(r.repoDir, "config")
+	lock, err := NewLockFile(r.repoPath, "config")
 	if err != nil {
 		return err
 	}

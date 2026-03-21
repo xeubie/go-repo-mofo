@@ -29,7 +29,6 @@ func TestCreateAndReadPack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
 
 	// first commit
 	if err := os.WriteFile(filepath.Join(workPath, "hello.txt"), []byte("hello, world!"), 0644); err != nil {
@@ -258,7 +257,6 @@ func TestWritePackFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientRepo.Close()
 
 	// create some files
 	if err := os.WriteFile(filepath.Join(clientPath, "file1.txt"), []byte("content of file 1"), 0644); err != nil {
@@ -330,7 +328,6 @@ func TestWritePackFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverRepo.Close()
 
 	pr, err := NewFilePackReader(packFilePath, opts.bufferSize())
 	if err != nil {
@@ -368,7 +365,6 @@ func TestIteratePackFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
 
 	packPath := filepath.Join(cwd, "testdata", "pack-b7f085e431fc05b0bca3d5c306dc148d7bbed2f4.pack")
 
@@ -408,7 +404,6 @@ func TestIteratePackFromStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
 
 	packPath := filepath.Join(cwd, "testdata", "pack-b7f085e431fc05b0bca3d5c306dc148d7bbed2f4.pack")
 	file, err := os.Open(packPath)
@@ -450,7 +445,6 @@ func TestReadPackedRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
 
 	packedRefsContent := `# pack-refs with: peeled fully-peeled sorted
 5246e54744f4e1824ca280e6a2630a87959d7cf4 refs/remotes/origin/master
@@ -458,7 +452,7 @@ func TestReadPackedRefs(t *testing.T) {
 5246e54744f4e1824ca280e6a2630a87959d7cf4 refs/remotes/sync/master
 1f6190c71bd33b37cfd885491889a0410f849f5b refs/remotes/sync/zig-0.14.0
 `
-	if err := os.WriteFile(filepath.Join(repo.repoDir, "packed-refs"), []byte(packedRefsContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.repoPath, "packed-refs"), []byte(packedRefsContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 

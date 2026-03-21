@@ -33,7 +33,7 @@ type Config struct {
 }
 
 func (repo *Repo) loadConfig() (*Config, error) {
-	configPath := filepath.Join(repo.repoDir, "config")
+	configPath := filepath.Join(repo.repoPath, "config")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {

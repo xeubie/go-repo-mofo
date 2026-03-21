@@ -48,7 +48,7 @@ func (repo *Repo) readIndex() (*Index, error) {
 		rootChildren:  make(map[string]bool),
 	}
 
-	indexPath := filepath.Join(repo.repoDir, "index")
+	indexPath := filepath.Join(repo.repoPath, "index")
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -355,7 +355,7 @@ func (idx *Index) Write(f *os.File) error {
 
 	// write header
 	buf.WriteString("DIRC")
-	binary.Write(&buf, binary.BigEndian, uint32(2))          // version
+	binary.Write(&buf, binary.BigEndian, uint32(2))           // version
 	binary.Write(&buf, binary.BigEndian, uint32(len(sorted))) // entry count
 
 	// write entries

@@ -28,41 +28,41 @@ const (
 )
 
 var commandNames = map[CommandKind]string{
-	CommandInit:    "init",
-	CommandAdd:     "add",
-	CommandUnadd:   "unadd",
-	CommandUntrack: "untrack",
-	CommandRm:      "rm",
-	CommandCommit:  "commit",
-	CommandTag:     "tag",
-	CommandStatus:  "status",
-	CommandBranch:  "branch",
-	CommandSwitchDir:   "switch",
-	CommandReset:    "reset",
-	CommandResetDir: "reset-dir",
-	CommandResetAdd: "reset-add",
-	CommandRestore:  "restore",
-	CommandConfig:   "config",
-	CommandRemote:   "remote",
+	CommandInit:      "init",
+	CommandAdd:       "add",
+	CommandUnadd:     "unadd",
+	CommandUntrack:   "untrack",
+	CommandRm:        "rm",
+	CommandCommit:    "commit",
+	CommandTag:       "tag",
+	CommandStatus:    "status",
+	CommandBranch:    "branch",
+	CommandSwitchDir: "switch",
+	CommandReset:     "reset",
+	CommandResetDir:  "reset-dir",
+	CommandResetAdd:  "reset-add",
+	CommandRestore:   "restore",
+	CommandConfig:    "config",
+	CommandRemote:    "remote",
 }
 
 var commandDescrips = map[CommandKind]string{
-	CommandInit:    "create an empty repository.",
-	CommandAdd:     "add file contents to the index.",
-	CommandUnadd:   "remove any changes to a file that were added to the index.",
-	CommandUntrack: "no longer track file in the index, but leave it in the work dir.",
-	CommandRm:      "no longer track file in the index *and* remove it from the work dir.",
-	CommandCommit:  "create a new commit.",
-	CommandTag:     "add, remove, and list tags.",
-	CommandStatus:  "show the status of uncommitted changes.",
-	CommandBranch:  "add, remove, and list branches.",
-	CommandSwitchDir:   "switch to a branch or commit id.",
-	CommandReset:    "make the current branch point to a new commit id.\nupdates the index, but the files in the work dir are left alone.",
-	CommandResetDir: "make the current branch point to a new commit id.\nupdates both the index and the work dir.\nsimilar to `git reset --hard`.",
-	CommandResetAdd: "make the current branch point to a new commit id.\ndoes not update the index or the work dir.\nsimilar to `git reset --soft`.",
-	CommandRestore:  "restore files in the work dir.",
-	CommandConfig:   "add, remove, and list config options.",
-	CommandRemote:   "add, remove, and list remotes.",
+	CommandInit:      "create an empty repository.",
+	CommandAdd:       "add file contents to the index.",
+	CommandUnadd:     "remove any changes to a file that were added to the index.",
+	CommandUntrack:   "no longer track file in the index, but leave it in the work dir.",
+	CommandRm:        "no longer track file in the index *and* remove it from the work dir.",
+	CommandCommit:    "create a new commit.",
+	CommandTag:       "add, remove, and list tags.",
+	CommandStatus:    "show the status of uncommitted changes.",
+	CommandBranch:    "add, remove, and list branches.",
+	CommandSwitchDir: "switch to a branch or commit id.",
+	CommandReset:     "make the current branch point to a new commit id.\nupdates the index, but the files in the work dir are left alone.",
+	CommandResetDir:  "make the current branch point to a new commit id.\nupdates both the index and the work dir.\nsimilar to `git reset --hard`.",
+	CommandResetAdd:  "make the current branch point to a new commit id.\ndoes not update the index or the work dir.\nsimilar to `git reset --soft`.",
+	CommandRestore:   "restore files in the work dir.",
+	CommandConfig:    "add, remove, and list config options.",
+	CommandRemote:    "add, remove, and list remotes.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -284,15 +284,15 @@ type ResetAddCommand struct {
 }
 
 type Command struct {
-	Kind    CommandKind
-	Init    *InitCommand
-	Add     *AddCommand
-	Unadd   *UnaddCommand
-	Untrack *UntrackCommand
-	Rm      *RmCommand
-	Commit  *CommitCommand
-	Tag     *TagCommand
-	Branch  *BranchCommand
+	Kind     CommandKind
+	Init     *InitCommand
+	Add      *AddCommand
+	Unadd    *UnaddCommand
+	Untrack  *UntrackCommand
+	Rm       *RmCommand
+	Commit   *CommitCommand
+	Tag      *TagCommand
+	Branch   *BranchCommand
 	Switch   *SwitchCommand
 	ResetAdd *ResetAddCommand
 	Restore  *RestoreCommand
@@ -558,7 +558,7 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 type DispatchKind int
 
 const (
-	DispatchInvalidCommand  DispatchKind = iota
+	DispatchInvalidCommand DispatchKind = iota
 	DispatchInvalidArgument
 	DispatchHelp
 	DispatchCLI
@@ -584,8 +584,8 @@ func NewDispatch(cmdArgs *CommandArgs) *Dispatch {
 			// check for unused args
 			for arg := range cmdArgs.UnusedArgs {
 				return &Dispatch{
-					Kind:       DispatchInvalidArgument,
-					InvalidCmd: cmdArgs.CommandKind,
+					Kind:        DispatchInvalidArgument,
+					InvalidCmd:  cmdArgs.CommandKind,
 					InvalidName: arg,
 				}
 			}

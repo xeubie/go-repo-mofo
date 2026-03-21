@@ -63,7 +63,7 @@ type ObjectHeader struct {
 func (repo *Repo) writeObject(header ObjectHeader, reader io.Reader) ([]byte, error) {
 	headerStr := fmt.Sprintf("%s %d\x00", header.Kind.Name(), header.Size)
 
-	tempFile, err := os.CreateTemp(repo.repoDir, "object.temp.*")
+	tempFile, err := os.CreateTemp(repo.repoPath, "object.temp.*")
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (repo *Repo) writeObject(header ObjectHeader, reader io.Reader) ([]byte, er
 	oidBytes := hasher.Sum(nil)
 	oidHex := hex.EncodeToString(oidBytes)
 
-	objDir := filepath.Join(repo.repoDir, "objects", oidHex[:2])
+	objDir := filepath.Join(repo.repoPath, "objects", oidHex[:2])
 	objPath := filepath.Join(objDir, oidHex[2:])
 	if _, err := os.Stat(objPath); err == nil {
 		return oidBytes, nil
@@ -119,7 +119,7 @@ func (repo *Repo) writeObject(header ObjectHeader, reader io.Reader) ([]byte, er
 
 // readLooseObject reads and decompresses a loose git object.
 func (repo *Repo) readLooseObject(oidHex string) ([]byte, error) {
-	objPath := filepath.Join(repo.repoDir, "objects", oidHex[:2], oidHex[2:])
+	objPath := filepath.Join(repo.repoPath, "objects", oidHex[:2], oidHex[2:])
 	file, err := os.Open(objPath)
 	if err != nil {
 		return nil, err
@@ -335,7 +335,7 @@ func (repo *Repo) signContent(lines []string, signingKey string) ([]string, erro
 	}
 
 	sigFileName := contentFileName + ".sig"
-	sigFilePath := filepath.Join(repo.repoDir, sigFileName)
+	sigFilePath := filepath.Join(repo.repoPath, sigFileName)
 	sigData, err := os.ReadFile(sigFilePath)
 	if err != nil {
 		return nil, err
@@ -795,7 +795,7 @@ func (o *Object) parseTag() error {
 type ObjectIterKind int
 
 const (
-	ObjectIterAll    ObjectIterKind = iota
+	ObjectIterAll ObjectIterKind = iota
 	ObjectIterCommit
 )
 
