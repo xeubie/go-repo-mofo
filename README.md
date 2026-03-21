@@ -25,37 +25,40 @@
 ░░▒▒▓▓██████████████████████████████████████████████████████▓▓▒▒░░
 ```
 
-GoRepoMofo implements Git in Go. All of its functionality is exposed through the [Repo](repo.go) struct. See the [repo test](repo_test.go) for an example of using it as a library.
+GoRepoMofo implements Git in Go. See below for the functionality it currently has. This project is focused on being useful for running server-side, so it has a complete implementation of `upload-pack` and `receive-pack`.
 
-You can also run it as an executable:
+All of GoRepoMofo's functionality is exposed through the [Repo](repo.go) struct. See the [repo test](repo_test.go) for an example of using it as a library. You can also run it as an executable:
 
 ```
 > go run cmd/repomofo/main.go
 help: repomofo <command> [<args>]
 
-init       create an empty repository.
-add        add file contents to the index.
-unadd      remove any changes to a file that were added to the index.
-untrack    no longer track file in the index, but leave it in the work dir.
-rm         no longer track file in the index *and* remove it from the work dir.
-commit     create a new commit.
-tag        add, remove, and list tags.
-status     show the status of uncommitted changes.
-branch     add, remove, and list branches.
-switch     switch to a branch or commit id.
-reset      make the current branch point to a new commit id.
-           updates the index, but the files in the work dir are left alone.
-reset-dir  make the current branch point to a new commit id.
-           updates both the index and the work dir.
-           similar to `git reset --hard`.
-reset-add  make the current branch point to a new commit id.
-           does not update the index or the work dir.
-           this is like calling reset and then adding everything to the index.
-           similar to `git reset --soft`.
-restore    restore files in the work dir.
-log        show commit logs.
-config     add, remove, and list config options.
-remote     add, remove, and list remotes.
+init          create an empty repository.
+add           add file contents to the index.
+unadd         remove any changes to a file that were added to the index.
+untrack       no longer track file in the index, but leave it in the work dir.
+rm            no longer track file in the index *and* remove it from the work dir.
+commit        create a new commit.
+tag           add, remove, and list tags.
+status        show the status of uncommitted changes.
+branch        add, remove, and list branches.
+switch        switch to a branch or commit id.
+reset         make the current branch point to a new commit id.
+              updates the index, but the files in the work dir are left alone.
+reset-dir     make the current branch point to a new commit id.
+              updates both the index and the work dir.
+              similar to `git reset --hard`.
+reset-add     make the current branch point to a new commit id.
+              does not update the index or the work dir.
+              this is like calling reset and then adding everything to the index.
+              similar to `git reset --soft`.
+restore       restore files in the work dir.
+log           show commit logs.
+config        add, remove, and list config options.
+remote        add, remove, and list remotes.
+receive-pack  receive what is pushed into the repository.
+upload-pack   send what is fetched from the repository.
+http-backend  a CGI program forwarding receive-pack and upload-pack over HTTP.
 ```
 
 To run the tests:
