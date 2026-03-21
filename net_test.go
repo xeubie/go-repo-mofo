@@ -352,7 +352,7 @@ func modifyGoFiles(t *testing.T, dir string) {
 
 func TestCloneHTTP(t *testing.T) {
 	tempDir := t.TempDir()
-	testClone(t, newHTTPServer(3031, tempDir), tempDir)
+	testClone(t, newHTTPServer(3031, tempDir), tempDir, nil)
 }
 
 func TestCloneRaw(t *testing.T) {
@@ -360,7 +360,7 @@ func TestCloneRaw(t *testing.T) {
 		t.Skip("raw transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testClone(t, newRawServer(3032, tempDir), tempDir)
+	testClone(t, newRawServer(3032, tempDir), tempDir, nil)
 }
 
 func TestCloneSSH(t *testing.T) {
@@ -368,10 +368,19 @@ func TestCloneSSH(t *testing.T) {
 		t.Skip("ssh transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testClone(t, newSSHServer(3033, tempDir), tempDir)
+
+	binPath := filepath.Join(tempDir, "repomofo")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/repomofo")
+	buildCmd.Dir = "."
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build repomofo binary failed: %v\n%s", err, out)
+	}
+
+	extraArgs := []string{"--upload-pack", binPath + " upload-pack"}
+	testClone(t, newSSHServer(3033, tempDir), tempDir, extraArgs)
 }
 
-func testClone(t *testing.T, server testServer, tempDir string) {
+func testClone(t *testing.T, server testServer, tempDir string, extraArgs []string) {
 	server.start(t)
 	defer server.stop()
 
@@ -403,7 +412,7 @@ func testClone(t *testing.T, server testServer, tempDir string) {
 	remoteURL := server.remoteURL(serverPath)
 
 	// shallow clone (--depth 1)
-	runGitOnServer(t, server, tempDir, "clone", "--depth", "1", remoteURL, "client")
+	runGitOnServer(t, server, tempDir, append([]string{"clone"}, append(extraArgs, "--depth", "1", remoteURL, "client")...)...)
 
 	// verify clone
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
@@ -416,7 +425,7 @@ func testClone(t *testing.T, server testServer, tempDir string) {
 	runGit(t, serverPath, "commit", "-m", "add extra file")
 
 	// pull --unshallow
-	runGitOnServer(t, server, clientPath, "pull", "--unshallow")
+	runGitOnServer(t, server, clientPath, append([]string{"pull"}, append(extraArgs, "--unshallow")...)...)
 
 	// verify unshallow pull
 	if _, err := os.Stat(filepath.Join(clientPath, "extra.txt")); err != nil {
@@ -425,28 +434,28 @@ func testClone(t *testing.T, server testServer, tempDir string) {
 
 	// clone with --shallow-since
 	os.RemoveAll(clientPath)
-	runGitOnServer(t, server, tempDir, "clone", "--shallow-since=2000-01-01", remoteURL, "client")
+	runGitOnServer(t, server, tempDir, append([]string{"clone"}, append(extraArgs, "--shallow-since=2000-01-01", remoteURL, "client")...)...)
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found after shallow-since clone: %v", err)
 	}
 
 	// clone with --shallow-exclude
 	os.RemoveAll(clientPath)
-	runGitOnServer(t, server, tempDir, "clone", "--shallow-exclude=v1", remoteURL, "client")
+	runGitOnServer(t, server, tempDir, append([]string{"clone"}, append(extraArgs, "--shallow-exclude=v1", remoteURL, "client")...)...)
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found after shallow-exclude clone: %v", err)
 	}
 
 	// clone with --filter=blob:none
 	os.RemoveAll(clientPath)
-	runGitOnServer(t, server, tempDir, "clone", "--filter=blob:none", remoteURL, "client")
+	runGitOnServer(t, server, tempDir, append([]string{"clone"}, append(extraArgs, "--filter=blob:none", remoteURL, "client")...)...)
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found after blob:none clone: %v", err)
 	}
 
 	// clone with --filter=tree:0
 	os.RemoveAll(clientPath)
-	runGitOnServer(t, server, tempDir, "clone", "--filter=tree:0", remoteURL, "client")
+	runGitOnServer(t, server, tempDir, append([]string{"clone"}, append(extraArgs, "--filter=tree:0", remoteURL, "client")...)...)
 	if _, err := os.Stat(filepath.Join(clientPath, "goodbye.txt")); err != nil {
 		t.Fatalf("goodbye.txt not found after tree:0 clone: %v", err)
 	}
@@ -456,7 +465,7 @@ func testClone(t *testing.T, server testServer, tempDir string) {
 
 func TestFetchHTTP(t *testing.T) {
 	tempDir := t.TempDir()
-	testFetch(t, newHTTPServer(3022, tempDir), tempDir)
+	testFetch(t, newHTTPServer(3022, tempDir), tempDir, nil)
 }
 
 func TestFetchRaw(t *testing.T) {
@@ -464,7 +473,7 @@ func TestFetchRaw(t *testing.T) {
 		t.Skip("raw transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testFetch(t, newRawServer(3023, tempDir), tempDir)
+	testFetch(t, newRawServer(3023, tempDir), tempDir, nil)
 }
 
 func TestFetchSSH(t *testing.T) {
@@ -472,10 +481,19 @@ func TestFetchSSH(t *testing.T) {
 		t.Skip("ssh transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testFetch(t, newSSHServer(3024, tempDir), tempDir)
+
+	binPath := filepath.Join(tempDir, "repomofo")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/repomofo")
+	buildCmd.Dir = "."
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build repomofo binary failed: %v\n%s", err, out)
+	}
+
+	extraArgs := []string{"--upload-pack", binPath + " upload-pack"}
+	testFetch(t, newSSHServer(3024, tempDir), tempDir, extraArgs)
 }
 
-func testFetch(t *testing.T, server testServer, tempDir string) {
+func testFetch(t *testing.T, server testServer, tempDir string, extraArgs []string) {
 	server.start(t)
 	defer server.stop()
 
@@ -506,7 +524,7 @@ func testFetch(t *testing.T, server testServer, tempDir string) {
 	runGit(t, clientPath, "config", "branch.master.remote", "origin")
 
 	// pull
-	runGitOnServer(t, server, clientPath, "pull", "origin", "master")
+	runGitOnServer(t, server, clientPath, append([]string{"pull"}, append(extraArgs, "origin", "master")...)...)
 
 	// verify pull was successful
 	clientHead := gitRevParse(t, clientPath, "HEAD")
@@ -521,7 +539,7 @@ func testFetch(t *testing.T, server testServer, tempDir string) {
 	commit2 := gitRevParse(t, serverPath, "HEAD")
 
 	// fetch with want-ref
-	runGitOnServer(t, server, clientPath, "fetch", "origin", "master")
+	runGitOnServer(t, server, clientPath, append([]string{"fetch"}, append(extraArgs, "origin", "master")...)...)
 
 	// verify fetch was successful
 	remoteMaster := gitRevParse(t, clientPath, "refs/remotes/origin/master")
@@ -534,7 +552,7 @@ func testFetch(t *testing.T, server testServer, tempDir string) {
 
 func TestPushHTTP(t *testing.T) {
 	tempDir := t.TempDir()
-	testPush(t, newHTTPServer(3028, tempDir), tempDir, "")
+	testPush(t, newHTTPServer(3028, tempDir), tempDir, nil)
 }
 
 func TestPushRaw(t *testing.T) {
@@ -542,7 +560,7 @@ func TestPushRaw(t *testing.T) {
 		t.Skip("raw transport not supported on windows")
 	}
 	tempDir := t.TempDir()
-	testPush(t, newRawServer(3029, tempDir), tempDir, "")
+	testPush(t, newRawServer(3029, tempDir), tempDir, nil)
 }
 
 func TestPushSSH(t *testing.T) {
@@ -559,11 +577,11 @@ func TestPushSSH(t *testing.T) {
 		t.Fatalf("build repomofo binary failed: %v\n%s", err, out)
 	}
 
-	receivePackCmd := binPath + " receive-pack"
-	testPush(t, newSSHServer(3030, tempDir), tempDir, receivePackCmd)
+	extraArgs := []string{"--receive-pack", binPath + " receive-pack"}
+	testPush(t, newSSHServer(3030, tempDir), tempDir, extraArgs)
 }
 
-func testPush(t *testing.T, server testServer, tempDir string, receivePackCmd string) {
+func testPush(t *testing.T, server testServer, tempDir string, extraArgs []string) {
 	server.start(t)
 	defer server.stop()
 
@@ -599,11 +617,7 @@ func testPush(t *testing.T, server testServer, tempDir string, receivePackCmd st
 	runGit(t, clientPath, "config", "branch.master.remote", "origin")
 
 	// push
-	if receivePackCmd != "" {
-		runGitOnServer(t, server, clientPath, "push", "--receive-pack", receivePackCmd, "origin", "master")
-	} else {
-		runGitOnServer(t, server, clientPath, "push", "origin", "master")
-	}
+	runGitOnServer(t, server, clientPath, append([]string{"push"}, append(extraArgs, "origin", "master")...)...)
 
 	// verify push was successful
 	serverHead := gitRevParse(t, serverPath, "HEAD")

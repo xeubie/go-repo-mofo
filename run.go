@@ -440,6 +440,18 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		options := cmd.ReceivePack.Options
 		options.ProtocolVersion = detectProtocolVersion()
 		return repo.ReceivePack(os.Stdin, os.Stdout, options)
+	case CommandUploadPack:
+		dir, err := filepath.Abs(cmd.UploadPack.Dir)
+		if err != nil {
+			return err
+		}
+		repo, err := OpenRepo(dir, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		options := cmd.UploadPack.Options
+		options.ProtocolVersion = detectProtocolVersion()
+		return repo.UploadPack(os.Stdin, os.Stdout, options)
 	}
 	return fmt.Errorf("unknown command")
 }

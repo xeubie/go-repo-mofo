@@ -27,6 +27,7 @@ const (
 	CommandConfig
 	CommandRemote
 	CommandReceivePack
+	CommandUploadPack
 )
 
 var commandNames = map[CommandKind]string{
@@ -48,6 +49,7 @@ var commandNames = map[CommandKind]string{
 	CommandConfig:    "config",
 	CommandRemote:      "remote",
 	CommandReceivePack: "receive-pack",
+	CommandUploadPack:  "upload-pack",
 }
 
 var commandDescrips = map[CommandKind]string{
@@ -69,6 +71,7 @@ var commandDescrips = map[CommandKind]string{
 	CommandConfig:    "add, remove, and list config options.",
 	CommandRemote:      "add, remove, and list remotes.",
 	CommandReceivePack: "receive what is pushed into the repository.",
+	CommandUploadPack:  "send what is fetched from the repository.",
 }
 
 var commandExamples = map[CommandKind]string{
@@ -129,6 +132,7 @@ remove remote:
 list remotes:
     repomofo remote list`,
 	CommandReceivePack: `repomofo receive-pack <directory>`,
+	CommandUploadPack:  `repomofo upload-pack <directory>`,
 }
 
 // valueFlags are flags that can have a value associated with them.
@@ -299,6 +303,11 @@ type ReceivePackCommand struct {
 	Options ReceivePackOptions
 }
 
+type UploadPackCommand struct {
+	Dir     string
+	Options UploadPackOptions
+}
+
 type Command struct {
 	Kind        CommandKind
 	Init        *InitCommand
@@ -316,6 +325,7 @@ type Command struct {
 	Config      *ConfigCommand
 	Remote      *ConfigCommand
 	ReceivePack *ReceivePackCommand
+	UploadPack  *UploadPackCommand
 }
 
 type RestoreCommand struct {
@@ -563,6 +573,18 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 			},
 		}}
 
+	case CommandUploadPack:
+		if len(cmdArgs.PositionalArgs) != 1 {
+			return nil
+		}
+		return &Command{Kind: CommandUploadPack, UploadPack: &UploadPackCommand{
+			Dir: cmdArgs.PositionalArgs[0],
+			Options: UploadPackOptions{
+				AdvertiseRefs: cmdArgs.Contains("--http-backend-info-refs"),
+				IsStateless:   cmdArgs.Contains("--stateless-rpc"),
+			},
+		}}
+
 	case CommandConfig, CommandRemote:
 		if len(cmdArgs.PositionalArgs) == 0 {
 			return nil
@@ -688,7 +710,7 @@ func PrintHelp(cmdKind *CommandKind, w io.Writer) {
 		}
 	} else {
 		fmt.Fprintf(w, "help: repomofo <command> [<args>]\n\n")
-		for kind := CommandInit; kind <= CommandReceivePack; kind++ {
+		for kind := CommandInit; kind <= CommandUploadPack; kind++ {
 			name := commandNames[kind]
 			printAligned(w, name, commandDescrips[kind], indent)
 		}

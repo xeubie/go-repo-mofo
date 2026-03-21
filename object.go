@@ -597,6 +597,7 @@ type CommitContent struct {
 	Author     string
 	Committer  string
 	Message    string
+	Timestamp  uint64 // committer timestamp (unix epoch seconds)
 }
 
 type TreeContentEntry struct {
@@ -747,11 +748,28 @@ func (o *Object) parseCommit() error {
 			cc.Author = line[7:]
 		} else if strings.HasPrefix(line, "committer ") {
 			cc.Committer = line[10:]
+			cc.Timestamp = parseIdentTimestamp(line[10:])
 		}
 	}
 
 	o.Commit = cc
 	return nil
+}
+
+// parseIdentTimestamp extracts the unix timestamp from a git ident line
+// of the form "Name <email> timestamp timezone".
+func parseIdentTimestamp(ident string) uint64 {
+	// find last two space-separated tokens: "timestamp timezone"
+	parts := strings.Split(ident, " ")
+	if len(parts) < 3 {
+		return 0
+	}
+	tsStr := parts[len(parts)-2]
+	ts, err := strconv.ParseUint(tsStr, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return ts
 }
 
 func (o *Object) parseTag() error {
@@ -800,8 +818,9 @@ const (
 )
 
 type ObjectIteratorOptions struct {
-	Kind     ObjectIterKind
-	MaxDepth *int
+	Kind       ObjectIterKind
+	MaxDepth   *int
+	Full bool // if true, Next returns parsed objects; if false, returns raw objects
 }
 
 type oidQueueEntry struct {
@@ -813,32 +832,33 @@ type ObjectIterator struct {
 	repo     *Repo
 	options  ObjectIteratorOptions
 	queue    []oidQueueEntry
-	excludes map[string]bool
+	Excludes map[string]bool
+	Depth    int // depth of the last object returned by Next
 }
 
 func (repo *Repo) NewObjectIterator(opts ObjectIteratorOptions) *ObjectIterator {
 	return &ObjectIterator{
 		repo:     repo,
 		options:  opts,
-		excludes: make(map[string]bool),
+		Excludes: make(map[string]bool),
 	}
 }
 
 func (it *ObjectIterator) Include(oidHex string) {
-	it.includeAtDepth(oidHex, 0)
+	it.IncludeAtDepth(oidHex, 0)
 }
 
-func (it *ObjectIterator) includeAtDepth(oidHex string, depth int) {
+func (it *ObjectIterator) IncludeAtDepth(oidHex string, depth int) {
 	if it.options.MaxDepth != nil && depth > *it.options.MaxDepth {
 		return
 	}
-	if !it.excludes[oidHex] {
+	if !it.Excludes[oidHex] {
 		it.queue = append(it.queue, oidQueueEntry{oid: oidHex, depth: depth})
 	}
 }
 
 func (it *ObjectIterator) Exclude(oidHex string) error {
-	it.excludes[oidHex] = true
+	it.Excludes[oidHex] = true
 
 	obj, err := it.repo.NewObject(oidHex, true)
 	if err != nil {
@@ -862,7 +882,7 @@ func (it *ObjectIterator) Exclude(oidHex string) error {
 	case ObjectKindCommit:
 		if obj.Commit != nil {
 			for _, pid := range obj.Commit.ParentOIDs {
-				it.excludes[pid] = true
+				it.Excludes[pid] = true
 			}
 			if it.options.Kind == ObjectIterAll {
 				if err := it.Exclude(obj.Commit.Tree); err != nil {
@@ -880,10 +900,10 @@ func (it *ObjectIterator) Next() (*Object, error) {
 		entry := it.queue[0]
 		it.queue = it.queue[1:]
 
-		if it.excludes[entry.oid] {
+		if it.Excludes[entry.oid] {
 			continue
 		}
-		it.excludes[entry.oid] = true
+		it.Excludes[entry.oid] = true
 
 		fullObj, err := it.repo.NewObject(entry.oid, true)
 		if err != nil {
@@ -891,10 +911,15 @@ func (it *ObjectIterator) Next() (*Object, error) {
 		}
 
 		it.includeContentRefs(fullObj, entry.depth+1)
+		it.Depth = entry.depth
 
 		if it.options.Kind == ObjectIterCommit && fullObj.Kind != ObjectKindCommit {
 			fullObj.Close()
 			continue
+		}
+
+		if it.options.Full {
+			return fullObj, nil
 		}
 
 		fullObj.Close()
@@ -917,21 +942,21 @@ func (it *ObjectIterator) includeContentRefs(obj *Object, childDepth int) {
 				if entry.Mode.ObjType() == ModeObjectTypeGitlink {
 					continue
 				}
-				it.includeAtDepth(hex.EncodeToString(entry.OID), childDepth)
+				it.IncludeAtDepth(hex.EncodeToString(entry.OID), childDepth)
 			}
 		}
 	case ObjectKindCommit:
 		if obj.Commit != nil {
 			for _, pid := range obj.Commit.ParentOIDs {
-				it.includeAtDepth(pid, childDepth)
+				it.IncludeAtDepth(pid, childDepth)
 			}
 			if it.options.Kind == ObjectIterAll {
-				it.includeAtDepth(obj.Commit.Tree, childDepth)
+				it.IncludeAtDepth(obj.Commit.Tree, childDepth)
 			}
 		}
 	case ObjectKindTag:
 		if obj.Tag != nil {
-			it.includeAtDepth(obj.Tag.Target, childDepth)
+			it.IncludeAtDepth(obj.Tag.Target, childDepth)
 		}
 	}
 }

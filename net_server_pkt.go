@@ -15,8 +15,8 @@ const (
 
 func pktLineHeader(length int) [4]byte {
 	var header [4]byte
-	hex := fmt.Sprintf("%04x", length)
-	copy(header[:], hex)
+	h := fmt.Sprintf("%04x", length)
+	copy(header[:], h)
 	return header
 }
 
@@ -37,6 +37,28 @@ func writePktFlush(w io.Writer) error {
 	return err
 }
 
+func writePktDelim(w io.Writer) error {
+	_, err := w.Write([]byte("0001"))
+	return err
+}
+
+// writePktLineSB writes a pkt-line with a sideband byte prefix.
+func writePktLineSB(w io.Writer, band byte, data []byte) error {
+	length := len(data) + pktLenSize + 1
+	header := pktLineHeader(length)
+	if _, err := w.Write(header[:]); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte{band}); err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	return nil
+}
+
+// readPktLine reads a pkt-line. Returns nil for flush packets.
 func readPktLine(r io.Reader) ([]byte, error) {
 	var header [pktLenSize]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
@@ -68,6 +90,64 @@ func readPktLine(r io.Reader) ([]byte, error) {
 		buf = buf[:dataLen-1]
 	}
 	return buf, nil
+}
+
+type pktLineResultKind int
+
+const (
+	pktLineData pktLineResultKind = iota
+	pktLineFlush
+	pktLineDelim
+	pktLineResponseEnd
+	pktLineEOF
+)
+
+type pktLineResult struct {
+	kind pktLineResultKind
+	data []byte
+}
+
+// readPktLineEx reads a pkt-line and distinguishes flush/delim/response_end/eof/data.
+func readPktLineEx(r io.Reader) (pktLineResult, error) {
+	var header [pktLenSize]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return pktLineResult{kind: pktLineEOF}, nil
+		}
+		return pktLineResult{}, err
+	}
+
+	dst := make([]byte, 2)
+	_, err := hex.Decode(dst, header[:])
+	if err != nil {
+		return pktLineResult{}, fmt.Errorf("invalid pkt-line header: %w", err)
+	}
+	length := int(dst[0])<<8 | int(dst[1])
+
+	switch length {
+	case 0:
+		return pktLineResult{kind: pktLineFlush}, nil
+	case 1:
+		return pktLineResult{kind: pktLineDelim}, nil
+	case 2:
+		return pktLineResult{kind: pktLineResponseEnd}, nil
+	}
+
+	if length < pktLenSize {
+		return pktLineResult{}, fmt.Errorf("invalid pkt-line length: %d", length)
+	}
+
+	dataLen := length - pktLenSize
+	buf := make([]byte, dataLen)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return pktLineResult{}, err
+	}
+
+	// chomp trailing newline
+	if dataLen > 0 && buf[dataLen-1] == '\n' {
+		buf = buf[:dataLen-1]
+	}
+	return pktLineResult{kind: pktLineData, data: buf}, nil
 }
 
 func sendSideband(w io.Writer, band byte, data []byte) error {
