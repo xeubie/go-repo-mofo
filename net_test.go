@@ -18,220 +18,246 @@ import (
 	"time"
 )
 
-// transportKind represents the network transport protocol.
-type transportKind int
+// testServer is the interface for test transport servers.
+type testServer interface {
+	start(t *testing.T)
+	stop()
+	remoteURL(serverPath string) string
+}
 
-const (
-	transportHTTP transportKind = iota
-	transportRaw
-	transportSSH
-)
+// runGitOnServer runs a git command, using SSH config if the server is an sshServer.
+func runGitOnServer(t *testing.T, server testServer, dir string, args ...string) {
+	t.Helper()
+	if s, ok := server.(*sshServer); ok {
+		runGitWithSSH(t, dir, s.sshConfigArg(), args...)
+	} else {
+		runGit(t, dir, args...)
+	}
+}
 
-// testServer abstracts the differences between HTTP, raw git, and SSH servers.
-type testServer struct {
-	kind    transportKind
+// runGitOnServerMayFail is like runGitOnServer but ignores exit errors.
+func runGitOnServerMayFail(t *testing.T, server testServer, dir string, args ...string) {
+	t.Helper()
+	if s, ok := server.(*sshServer); ok {
+		runGitWithSSHMayFail(t, dir, s.sshConfigArg(), args...)
+	} else {
+		runGitMayFail(t, dir, args...)
+	}
+}
+
+// --- HTTP server ---
+
+type httpServer struct {
+	port     int
+	tempDir  string
+	listener net.Listener
+	server   *http.Server
+}
+
+func newHTTPServer(port int, tempDir string) *httpServer {
+	return &httpServer{port: port, tempDir: tempDir}
+}
+
+func (s *httpServer) start(t *testing.T) {
+	t.Helper()
+	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listen on %s failed: %v", addr, err)
+	}
+	s.listener = ln
+
+	absTempDir, err := filepath.Abs(s.tempDir)
+	if err != nil {
+		t.Fatalf("abs temp dir failed: %v", err)
+	}
+
+	backendPath := gitHTTPBackendPath()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		pathTranslated := filepath.Join(absTempDir, r.URL.Path)
+		handler := &cgi.Handler{
+			Path: backendPath,
+			Env: []string{
+				"GIT_PROJECT_ROOT=" + absTempDir,
+				"GIT_HTTP_EXPORT_ALL=1",
+				"PATH_TRANSLATED=" + pathTranslated,
+			},
+		}
+		handler.ServeHTTP(w, r)
+	})
+
+	s.server = &http.Server{Handler: mux}
+	go s.server.Serve(s.listener)
+}
+
+func (s *httpServer) stop() {
+	if s.server != nil {
+		s.server.Close()
+	}
+	if s.listener != nil {
+		s.listener.Close()
+	}
+}
+
+func (s *httpServer) remoteURL(serverPath string) string {
+	return fmt.Sprintf("http://localhost:%d/server", s.port)
+}
+
+// --- Raw git daemon server ---
+
+type rawServer struct {
 	port    int
 	tempDir string
-
-	// HTTP
-	httpListener net.Listener
-	httpServer   *http.Server
-
-	// raw / ssh
 	process *exec.Cmd
 }
 
-func newTestServer(kind transportKind, port int, tempDir string) *testServer {
-	return &testServer{
-		kind:    kind,
-		port:    port,
-		tempDir: tempDir,
-	}
+func newRawServer(port int, tempDir string) *rawServer {
+	return &rawServer{port: port, tempDir: tempDir}
 }
 
-func (s *testServer) init(t *testing.T) {
+func (s *rawServer) start(t *testing.T) {
 	t.Helper()
-	switch s.kind {
-	case transportHTTP:
-		addr := fmt.Sprintf("127.0.0.1:%d", s.port)
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			t.Fatalf("listen on %s failed: %v", addr, err)
-		}
-		s.httpListener = ln
+	portStr := fmt.Sprintf("--port=%d", s.port)
+	s.process = exec.Command("git", "daemon", "--reuseaddr", "--base-path=.",
+		"--export-all", "--enable=receive-pack", "--log-destination=stderr", portStr)
+	s.process.Dir = s.tempDir
+	s.process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := s.process.Start(); err != nil {
+		t.Fatalf("git daemon start failed: %v", err)
+	}
+	waitForPort(t, s.port)
+}
 
-		absTempDir, err := filepath.Abs(s.tempDir)
-		if err != nil {
-			t.Fatalf("abs temp dir failed: %v", err)
-		}
-
-		backendPath := gitHTTPBackendPath()
-		mux := http.NewServeMux()
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			pathTranslated := filepath.Join(absTempDir, r.URL.Path)
-
-			handler := &cgi.Handler{
-				Path: backendPath,
-				Env: []string{
-					"GIT_PROJECT_ROOT=" + absTempDir,
-					"GIT_HTTP_EXPORT_ALL=1",
-					"PATH_TRANSLATED=" + pathTranslated,
-				},
-			}
-			handler.ServeHTTP(w, r)
-		})
-
-		s.httpServer = &http.Server{Handler: mux}
-
-	case transportSSH:
-		absTempDir, err := filepath.Abs(s.tempDir)
-		if err != nil {
-			t.Fatalf("abs temp dir failed: %v", err)
-		}
-
-		hostKeyPath := filepath.Join(absTempDir, "host_key")
-		authKeysPath := filepath.Join(absTempDir, "authorized_keys")
-
-		// create host key
-		writeTestFile(t, s.tempDir, "host_key",
-			"-----BEGIN OPENSSH PRIVATE KEY-----\n"+
-				"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n"+
-				"1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQS1ppUfk8n7yvVKEgz3tXjt4q76VGuj\n"+
-				"LcQlRwmogzovV40LLcX0aTObZlQaLWfzJMNpCa/ztMpQlr86nsarE4lEAAAAqLe43zK3uN\n"+
-				"8yAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLWmlR+TyfvK9UoS\n"+
-				"DPe1eO3irvpUa6MtxCVHCaiDOi9XjQstxfRpM5tmVBotZ/Mkw2kJr/O0ylCWvzqexqsTiU\n"+
-				"QAAAAgQ+LCk30ZNJxb2Da5JL+QOFWCMf7bgXCWcEzhEGGvFWYAAAALcmFkYXJAcm9hcmsB\n"+
-				"AgMEBQ==\n"+
-				"-----END OPENSSH PRIVATE KEY-----\n")
-		os.Chmod(hostKeyPath, 0o600)
-
-		// create client private key
-		writeTestFile(t, s.tempDir, "key",
-			"-----BEGIN OPENSSH PRIVATE KEY-----\n"+
-				"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n"+
-				"QyNTUxOQAAACCniLPJiaooAWecvOCeAjoJwCSeWxzysvpTNkpYjF22JgAAAJA+7hikPu4Y\n"+
-				"pAAAAAtzc2gtZWQyNTUxOQAAACCniLPJiaooAWecvOCeAjoJwCSeWxzysvpTNkpYjF22Jg\n"+
-				"AAAEDVlopOMnKt/7by/IA8VZvQXUS/O6VLkixOqnnahUdPCKeIs8mJqigBZ5y84J4COgnA\n"+
-				"JJ5bHPKy+lM2SliMXbYmAAAAC3JhZGFyQHJvYXJrAQI=\n"+
-				"-----END OPENSSH PRIVATE KEY-----\n")
-		os.Chmod(filepath.Join(absTempDir, "key"), 0o600)
-
-		// create client public key
-		writeTestFile(t, s.tempDir, "key.pub",
-			"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeIs8mJqigBZ5y84J4COgnAJJ5bHPKy+lM2SliMXbYm radar@roark\n")
-		os.Chmod(filepath.Join(absTempDir, "key.pub"), 0o600)
-
-		// create authorized_keys
-		writeTestFile(t, s.tempDir, "authorized_keys",
-			"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeIs8mJqigBZ5y84J4COgnAJJ5bHPKy+lM2SliMXbYm radar@roark\n")
-		os.Chmod(authKeysPath, 0o600)
-
-		// create known_hosts
-		writeTestFile(t, s.tempDir, "known_hosts",
-			fmt.Sprintf("[localhost]:%d ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLWmlR+TyfvK9UoSDPe1eO3irvpUa6MtxCVHCaiDOi9XjQstxfRpM5tmVBotZ/Mkw2kJr/O0ylCWvzqexqsTiUQ=", s.port))
-		os.Chmod(filepath.Join(absTempDir, "known_hosts"), 0o600)
-
-		// create sshd_config
-		writeTestFile(t, s.tempDir, "sshd_config",
-			"AuthenticationMethods publickey\n"+
-				"PubkeyAuthentication yes\n"+
-				"PasswordAuthentication no\n"+
-				"StrictModes no\n")
-		os.Chmod(filepath.Join(absTempDir, "sshd_config"), 0o600)
-
-		// create sshd.sh
-		sshdPath, err := exec.LookPath("sshd")
-		if err != nil {
-			t.Fatalf("sshd not found: %v", err)
-		}
-		writeTestFile(t, s.tempDir, "sshd.sh",
-			fmt.Sprintf("#!/bin/sh\nexec %s -p %d -f sshd_config -h \"%s\" -D -e -o AuthorizedKeysFile=\"%s\"",
-				sshdPath, s.port, hostKeyPath, authKeysPath))
-		os.Chmod(filepath.Join(absTempDir, "sshd.sh"), 0o755)
-
-	case transportRaw:
-		// nothing to init
+func (s *rawServer) stop() {
+	if s.process != nil && s.process.Process != nil {
+		syscall.Kill(-s.process.Process.Pid, syscall.SIGKILL)
+		s.process.Wait()
 	}
 }
 
-func (s *testServer) start(t *testing.T) {
+func (s *rawServer) remoteURL(serverPath string) string {
+	return fmt.Sprintf("git://localhost:%d/server", s.port)
+}
+
+// --- SSH server ---
+
+type sshServer struct {
+	port    int
+	tempDir string
+	process *exec.Cmd
+}
+
+func newSSHServer(port int, tempDir string) *sshServer {
+	return &sshServer{port: port, tempDir: tempDir}
+}
+
+func (s *sshServer) start(t *testing.T) {
 	t.Helper()
-	switch s.kind {
-	case transportHTTP:
-		go s.httpServer.Serve(s.httpListener)
-
-	case transportRaw:
-		portStr := fmt.Sprintf("--port=%d", s.port)
-		s.process = exec.Command("git", "daemon", "--reuseaddr", "--base-path=.",
-			"--export-all", "--enable=receive-pack", "--log-destination=stderr", portStr)
-		s.process.Dir = s.tempDir
-		s.process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := s.process.Start(); err != nil {
-			t.Fatalf("git daemon start failed: %v", err)
-		}
-
-	case transportSSH:
-		s.process = exec.Command("./sshd.sh")
-		s.process.Dir = s.tempDir
-		s.process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := s.process.Start(); err != nil {
-			t.Fatalf("sshd start failed: %v", err)
-		}
+	absTempDir, err := filepath.Abs(s.tempDir)
+	if err != nil {
+		t.Fatalf("abs temp dir failed: %v", err)
 	}
 
-	// wait for server to be ready by polling the port
-	if s.kind != transportHTTP { // HTTP is ready immediately via Go's Serve
-		addr := fmt.Sprintf("127.0.0.1:%d", s.port)
-		for i := 0; i < 50; i++ {
-			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-			if err == nil {
-				conn.Close()
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		t.Fatalf("server on port %d did not become ready", s.port)
+	hostKeyPath := filepath.Join(absTempDir, "host_key")
+	authKeysPath := filepath.Join(absTempDir, "authorized_keys")
+
+	writeTestFile(t, s.tempDir, "host_key",
+		"-----BEGIN OPENSSH PRIVATE KEY-----\n"+
+			"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n"+
+			"1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQS1ppUfk8n7yvVKEgz3tXjt4q76VGuj\n"+
+			"LcQlRwmogzovV40LLcX0aTObZlQaLWfzJMNpCa/ztMpQlr86nsarE4lEAAAAqLe43zK3uN\n"+
+			"8yAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLWmlR+TyfvK9UoS\n"+
+			"DPe1eO3irvpUa6MtxCVHCaiDOi9XjQstxfRpM5tmVBotZ/Mkw2kJr/O0ylCWvzqexqsTiU\n"+
+			"QAAAAgQ+LCk30ZNJxb2Da5JL+QOFWCMf7bgXCWcEzhEGGvFWYAAAALcmFkYXJAcm9hcmsB\n"+
+			"AgMEBQ==\n"+
+			"-----END OPENSSH PRIVATE KEY-----\n")
+	os.Chmod(hostKeyPath, 0o600)
+
+	writeTestFile(t, s.tempDir, "key",
+		"-----BEGIN OPENSSH PRIVATE KEY-----\n"+
+			"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n"+
+			"QyNTUxOQAAACCniLPJiaooAWecvOCeAjoJwCSeWxzysvpTNkpYjF22JgAAAJA+7hikPu4Y\n"+
+			"pAAAAAtzc2gtZWQyNTUxOQAAACCniLPJiaooAWecvOCeAjoJwCSeWxzysvpTNkpYjF22Jg\n"+
+			"AAAEDVlopOMnKt/7by/IA8VZvQXUS/O6VLkixOqnnahUdPCKeIs8mJqigBZ5y84J4COgnA\n"+
+			"JJ5bHPKy+lM2SliMXbYmAAAAC3JhZGFyQHJvYXJrAQI=\n"+
+			"-----END OPENSSH PRIVATE KEY-----\n")
+	os.Chmod(filepath.Join(absTempDir, "key"), 0o600)
+
+	writeTestFile(t, s.tempDir, "key.pub",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeIs8mJqigBZ5y84J4COgnAJJ5bHPKy+lM2SliMXbYm radar@roark\n")
+	os.Chmod(filepath.Join(absTempDir, "key.pub"), 0o600)
+
+	writeTestFile(t, s.tempDir, "authorized_keys",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeIs8mJqigBZ5y84J4COgnAJJ5bHPKy+lM2SliMXbYm radar@roark\n")
+	os.Chmod(authKeysPath, 0o600)
+
+	writeTestFile(t, s.tempDir, "known_hosts",
+		fmt.Sprintf("[localhost]:%d ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLWmlR+TyfvK9UoSDPe1eO3irvpUa6MtxCVHCaiDOi9XjQstxfRpM5tmVBotZ/Mkw2kJr/O0ylCWvzqexqsTiUQ=", s.port))
+	os.Chmod(filepath.Join(absTempDir, "known_hosts"), 0o600)
+
+	writeTestFile(t, s.tempDir, "sshd_config",
+		"AuthenticationMethods publickey\n"+
+			"PubkeyAuthentication yes\n"+
+			"PasswordAuthentication no\n"+
+			"StrictModes no\n")
+	os.Chmod(filepath.Join(absTempDir, "sshd_config"), 0o600)
+
+	sshdPath, err := exec.LookPath("sshd")
+	if err != nil {
+		t.Fatalf("sshd not found: %v", err)
+	}
+	writeTestFile(t, s.tempDir, "sshd.sh",
+		fmt.Sprintf("#!/bin/sh\nexec %s -p %d -f sshd_config -h \"%s\" -D -e -o AuthorizedKeysFile=\"%s\"",
+			sshdPath, s.port, hostKeyPath, authKeysPath))
+	os.Chmod(filepath.Join(absTempDir, "sshd.sh"), 0o755)
+
+	s.process = exec.Command("./sshd.sh")
+	s.process.Dir = s.tempDir
+	s.process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := s.process.Start(); err != nil {
+		t.Fatalf("sshd start failed: %v", err)
+	}
+	waitForPort(t, s.port)
+}
+
+func (s *sshServer) stop() {
+	if s.process != nil && s.process.Process != nil {
+		syscall.Kill(-s.process.Process.Pid, syscall.SIGKILL)
+		s.process.Wait()
 	}
 }
 
-func (s *testServer) stop() {
-	switch s.kind {
-	case transportHTTP:
-		s.httpServer.Close()
-		s.httpListener.Close()
-	case transportRaw, transportSSH:
-		if s.process != nil && s.process.Process != nil {
-			// kill the entire process group
-			syscall.Kill(-s.process.Process.Pid, syscall.SIGKILL)
-			s.process.Wait()
-		}
-	}
+func (s *sshServer) remoteURL(serverPath string) string {
+	return fmt.Sprintf("ssh://localhost:%d%s", s.port, serverPath)
 }
 
-func (s *testServer) remoteURL(serverPath string) string {
-	switch s.kind {
-	case transportHTTP:
-		return fmt.Sprintf("http://localhost:%d/server", s.port)
-	case transportRaw:
-		return fmt.Sprintf("git://localhost:%d/server", s.port)
-	case transportSSH:
-		return fmt.Sprintf("ssh://localhost:%d%s", s.port, serverPath)
-	}
-	return ""
-}
-
-func (s *testServer) sshConfigArg() string {
+func (s *sshServer) sshConfigArg() string {
 	absTempDir, _ := filepath.Abs(s.tempDir)
 	privKeyPath := filepath.Join(absTempDir, "key")
 	return fmt.Sprintf("core.sshCommand=ssh -o StrictHostKeyChecking=no -o IdentityFile=%s", privKeyPath)
 }
 
-// gitHTTPBackendPath finds the git-http-backend executable.
+// --- Helpers ---
+
+func waitForPort(t *testing.T, port int) {
+	t.Helper()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	for i := 0; i < 50; i++ {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("server on port %d did not become ready", port)
+}
+
 func gitHTTPBackendPath() string {
 	if p, err := exec.LookPath("git-http-backend"); err == nil {
 		return p
 	}
-	// try common locations
 	for _, p := range []string{
 		"/usr/lib/git-core/git-http-backend",
 		"/usr/libexec/git-core/git-http-backend",
@@ -243,7 +269,6 @@ func gitHTTPBackendPath() string {
 	return "git-http-backend"
 }
 
-// runGit runs a git command and fails the test if exit code is non-zero.
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -255,7 +280,6 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// runGitWithSSH runs a git command with SSH config and fails on non-zero exit.
 func runGitWithSSH(t *testing.T, dir string, sshArg string, args ...string) {
 	t.Helper()
 	fullArgs := []string{"-c", sshArg}
@@ -269,7 +293,6 @@ func runGitWithSSH(t *testing.T, dir string, sshArg string, args ...string) {
 	}
 }
 
-// runGitMayFail runs a git command and ignores exit errors (only fails if process couldn't start).
 func runGitMayFail(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -284,7 +307,6 @@ func runGitMayFail(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// runGitWithSSHMayFail runs a git command with SSH config, ignoring exit errors.
 func runGitWithSSHMayFail(t *testing.T, dir string, sshArg string, args ...string) {
 	t.Helper()
 	fullArgs := []string{"-c", sshArg}
@@ -308,7 +330,6 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// initServerRepo creates a bare-ish server repo using git init and configures it.
 func initServerRepo(t *testing.T, serverPath string) {
 	t.Helper()
 	runGit(t, ".", "init", serverPath)
@@ -316,7 +337,6 @@ func initServerRepo(t *testing.T, serverPath string) {
 	runGit(t, serverPath, "config", "user.email", "test@test")
 }
 
-// exportServerRepo creates the git-daemon-export-ok file.
 func exportServerRepo(t *testing.T, serverPath string) {
 	t.Helper()
 	f, err := os.Create(filepath.Join(serverPath, ".git", "git-daemon-export-ok"))
@@ -326,31 +346,82 @@ func exportServerRepo(t *testing.T, serverPath string) {
 	f.Close()
 }
 
+func gitRevParse(t *testing.T, dir, rev string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", rev)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse %s failed: %v", rev, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func copyGoFiles(t *testing.T, src, dst string) {
+	t.Helper()
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatalf("read dir %s failed: %v", src, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s failed: %v", e.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0644); err != nil {
+			t.Fatalf("write %s failed: %v", e.Name(), err)
+		}
+	}
+}
+
+func modifyGoFiles(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %s failed: %v", dir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(path, append([]byte("// EDIT\n"), data...), 0644); err != nil {
+			t.Fatalf("modify %s failed: %v", e.Name(), err)
+		}
+	}
+}
+
 // --- Clone tests ---
 
 func TestCloneHTTP(t *testing.T) {
-	testClone(t, transportHTTP, 3031)
+	tempDir := t.TempDir()
+	testClone(t, newHTTPServer(3031, tempDir), tempDir)
 }
 
 func TestCloneRaw(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("raw transport not supported on windows")
 	}
-	testClone(t, transportRaw, 3032)
+	tempDir := t.TempDir()
+	testClone(t, newRawServer(3032, tempDir), tempDir)
 }
 
 func TestCloneSSH(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("ssh transport not supported on windows")
 	}
-	testClone(t, transportSSH, 3033)
+	tempDir := t.TempDir()
+	testClone(t, newSSHServer(3033, tempDir), tempDir)
 }
 
-func testClone(t *testing.T, kind transportKind, port int) {
-	tempDir := t.TempDir()
-
-	server := newTestServer(kind, port, tempDir)
-	server.init(t)
+func testClone(t *testing.T, server testServer, tempDir string) {
 	server.start(t)
 	defer server.stop()
 
@@ -382,11 +453,7 @@ func testClone(t *testing.T, kind transportKind, port int) {
 	remoteURL := server.remoteURL(serverPath)
 
 	// shallow clone (--depth 1)
-	if kind == transportSSH {
-		runGitWithSSH(t, tempDir, server.sshConfigArg(), "clone", "--depth", "1", remoteURL, "client")
-	} else {
-		runGit(t, tempDir, "clone", "--depth", "1", remoteURL, "client")
-	}
+	runGitOnServer(t, server, tempDir, "clone", "--depth", "1", remoteURL, "client")
 
 	// verify clone
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
@@ -399,11 +466,7 @@ func testClone(t *testing.T, kind transportKind, port int) {
 	runGit(t, serverPath, "commit", "-m", "add extra file")
 
 	// pull --unshallow
-	if kind == transportSSH {
-		runGitWithSSH(t, clientPath, server.sshConfigArg(), "pull", "--unshallow")
-	} else {
-		runGit(t, clientPath, "pull", "--unshallow")
-	}
+	runGitOnServer(t, server, clientPath, "pull", "--unshallow")
 
 	// verify unshallow pull
 	if _, err := os.Stat(filepath.Join(clientPath, "extra.txt")); err != nil {
@@ -412,44 +475,28 @@ func testClone(t *testing.T, kind transportKind, port int) {
 
 	// clone with --shallow-since
 	os.RemoveAll(clientPath)
-	if kind == transportSSH {
-		runGitWithSSH(t, tempDir, server.sshConfigArg(), "clone", "--shallow-since=2000-01-01", remoteURL, "client")
-	} else {
-		runGit(t, tempDir, "clone", "--shallow-since=2000-01-01", remoteURL, "client")
-	}
+	runGitOnServer(t, server, tempDir, "clone", "--shallow-since=2000-01-01", remoteURL, "client")
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found after shallow-since clone: %v", err)
 	}
 
 	// clone with --shallow-exclude
 	os.RemoveAll(clientPath)
-	if kind == transportSSH {
-		runGitWithSSH(t, tempDir, server.sshConfigArg(), "clone", "--shallow-exclude=v1", remoteURL, "client")
-	} else {
-		runGit(t, tempDir, "clone", "--shallow-exclude=v1", remoteURL, "client")
-	}
+	runGitOnServer(t, server, tempDir, "clone", "--shallow-exclude=v1", remoteURL, "client")
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found after shallow-exclude clone: %v", err)
 	}
 
 	// clone with --filter=blob:none
 	os.RemoveAll(clientPath)
-	if kind == transportSSH {
-		runGitWithSSHMayFail(t, tempDir, server.sshConfigArg(), "clone", "--filter=blob:none", remoteURL, "client")
-	} else {
-		runGitMayFail(t, tempDir, "clone", "--filter=blob:none", remoteURL, "client")
-	}
+	runGitOnServerMayFail(t, server, tempDir, "clone", "--filter=blob:none", remoteURL, "client")
 	if _, err := os.Stat(filepath.Join(clientPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found after blob:none clone: %v", err)
 	}
 
 	// clone with --filter=tree:0
 	os.RemoveAll(clientPath)
-	if kind == transportSSH {
-		runGitWithSSHMayFail(t, tempDir, server.sshConfigArg(), "clone", "--filter=tree:0", remoteURL, "client")
-	} else {
-		runGitMayFail(t, tempDir, "clone", "--filter=tree:0", remoteURL, "client")
-	}
+	runGitOnServerMayFail(t, server, tempDir, "clone", "--filter=tree:0", remoteURL, "client")
 	if _, err := os.Stat(filepath.Join(clientPath, "goodbye.txt")); err != nil {
 		t.Fatalf("goodbye.txt not found after tree:0 clone: %v", err)
 	}
@@ -458,28 +505,27 @@ func testClone(t *testing.T, kind transportKind, port int) {
 // --- Fetch tests ---
 
 func TestFetchHTTP(t *testing.T) {
-	testFetch(t, transportHTTP, 3022)
+	tempDir := t.TempDir()
+	testFetch(t, newHTTPServer(3022, tempDir), tempDir)
 }
 
 func TestFetchRaw(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("raw transport not supported on windows")
 	}
-	testFetch(t, transportRaw, 3023)
+	tempDir := t.TempDir()
+	testFetch(t, newRawServer(3023, tempDir), tempDir)
 }
 
 func TestFetchSSH(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("ssh transport not supported on windows")
 	}
-	testFetch(t, transportSSH, 3024)
+	tempDir := t.TempDir()
+	testFetch(t, newSSHServer(3024, tempDir), tempDir)
 }
 
-func testFetch(t *testing.T, kind transportKind, port int) {
-	tempDir := t.TempDir()
-
-	server := newTestServer(kind, port, tempDir)
-	server.init(t)
+func testFetch(t *testing.T, server testServer, tempDir string) {
 	server.start(t)
 	defer server.stop()
 
@@ -510,11 +556,7 @@ func testFetch(t *testing.T, kind transportKind, port int) {
 	runGit(t, clientPath, "config", "branch.master.remote", "origin")
 
 	// pull
-	if kind == transportSSH {
-		runGitWithSSH(t, clientPath, server.sshConfigArg(), "pull", "origin", "master")
-	} else {
-		runGit(t, clientPath, "pull", "origin", "master")
-	}
+	runGitOnServer(t, server, clientPath, "pull", "origin", "master")
 
 	// verify pull was successful
 	clientHead := gitRevParse(t, clientPath, "HEAD")
@@ -529,11 +571,7 @@ func testFetch(t *testing.T, kind transportKind, port int) {
 	commit2 := gitRevParse(t, serverPath, "HEAD")
 
 	// fetch with want-ref
-	if kind == transportSSH {
-		runGitWithSSH(t, clientPath, server.sshConfigArg(), "fetch", "origin", "master")
-	} else {
-		runGit(t, clientPath, "fetch", "origin", "master")
-	}
+	runGitOnServer(t, server, clientPath, "fetch", "origin", "master")
 
 	// verify fetch was successful
 	remoteMaster := gitRevParse(t, clientPath, "refs/remotes/origin/master")
@@ -545,28 +583,27 @@ func testFetch(t *testing.T, kind transportKind, port int) {
 // --- Push tests ---
 
 func TestPushHTTP(t *testing.T) {
-	testPush(t, transportHTTP, 3028)
+	tempDir := t.TempDir()
+	testPush(t, newHTTPServer(3028, tempDir), tempDir)
 }
 
 func TestPushRaw(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("raw transport not supported on windows")
 	}
-	testPush(t, transportRaw, 3029)
+	tempDir := t.TempDir()
+	testPush(t, newRawServer(3029, tempDir), tempDir)
 }
 
 func TestPushSSH(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("ssh transport not supported on windows")
 	}
-	testPush(t, transportSSH, 3030)
+	tempDir := t.TempDir()
+	testPush(t, newSSHServer(3030, tempDir), tempDir)
 }
 
-func testPush(t *testing.T, kind transportKind, port int) {
-	tempDir := t.TempDir()
-
-	server := newTestServer(kind, port, tempDir)
-	server.init(t)
+func testPush(t *testing.T, server testServer, tempDir string) {
 	server.start(t)
 	defer server.stop()
 
@@ -602,11 +639,7 @@ func testPush(t *testing.T, kind transportKind, port int) {
 	runGit(t, clientPath, "config", "branch.master.remote", "origin")
 
 	// push
-	if kind == transportSSH {
-		runGitWithSSH(t, clientPath, server.sshConfigArg(), "push", "origin", "master")
-	} else {
-		runGit(t, clientPath, "push", "origin", "master")
-	}
+	runGitOnServer(t, server, clientPath, "push", "origin", "master")
 
 	// verify push was successful
 	serverHead := gitRevParse(t, serverPath, "HEAD")
@@ -615,62 +648,5 @@ func testPush(t *testing.T, kind transportKind, port int) {
 	}
 	if _, err := os.Stat(filepath.Join(serverPath, "hello.txt")); err != nil {
 		t.Fatalf("hello.txt not found on server after push: %v", err)
-	}
-}
-
-// --- Helpers ---
-
-// gitRevParse returns the OID for a given rev.
-func gitRevParse(t *testing.T, dir, rev string) string {
-	t.Helper()
-	cmd := exec.Command("git", "rev-parse", rev)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git rev-parse %s failed: %v", rev, err)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// copyGoFiles copies .go files from src into dst (for creating a large repo).
-func copyGoFiles(t *testing.T, src, dst string) {
-	t.Helper()
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		t.Fatalf("read dir %s failed: %v", src, err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(src, e.Name()))
-		if err != nil {
-			t.Fatalf("read %s failed: %v", e.Name(), err)
-		}
-		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0644); err != nil {
-			t.Fatalf("write %s failed: %v", e.Name(), err)
-		}
-	}
-}
-
-// modifyGoFiles prepends "// EDIT\n" to each .go file to trigger delta objects.
-func modifyGoFiles(t *testing.T, dir string) {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read dir %s failed: %v", dir, err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if err := os.WriteFile(path, append([]byte("// EDIT\n"), data...), 0644); err != nil {
-			t.Fatalf("modify %s failed: %v", e.Name(), err)
-		}
 	}
 }
