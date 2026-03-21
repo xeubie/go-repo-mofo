@@ -1294,6 +1294,88 @@ func TestRun(t *testing.T) {
 			t.Fatalf("fourth commit on master failed: %v", err)
 		}
 	}
+
+	// get HEAD contents (commit4)
+	var commit4 string
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		commit4, err = repo.ReadHeadRecurMaybe()
+		if err != nil {
+			t.Fatalf("read HEAD failed: %v", err)
+		}
+		if commit4 == "" {
+			t.Fatal("commit4 is empty")
+		}
+	}
+
+	// make sure the most recent branch name points to the most recent commit
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		masterOID, err := repo.ReadRef(Ref{Kind: RefHead, Name: "master"})
+		if err != nil {
+			t.Fatalf("read master ref failed: %v", err)
+		}
+		if masterOID != commit4 {
+			t.Fatalf("master ref = %s, want %s", masterOID, commit4)
+		}
+	}
+
+	// log
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		iter, err := repo.Log(nil)
+		if err != nil {
+			t.Fatalf("log failed: %v", err)
+		}
+
+		type logEntry struct {
+			oid     string
+			message string
+		}
+		var entries []logEntry
+		for {
+			rawObj, err := iter.Next()
+			if err != nil {
+				t.Fatalf("log next failed: %v", err)
+			}
+			if rawObj == nil {
+				break
+			}
+			rawObj.Close()
+
+			obj, err := repo.NewObject(rawObj.OID, true)
+			if err != nil {
+				t.Fatalf("read commit failed: %v", err)
+			}
+			entries = append(entries, logEntry{oid: obj.OID, message: obj.Commit.Message})
+			obj.Close()
+		}
+
+		if len(entries) != 4 {
+			t.Fatalf("log entry count = %d, want 4", len(entries))
+		}
+		if entries[0].oid != commit4 || entries[0].message != "fourth commit" {
+			t.Fatalf("log[0] = {%s, %q}, want {%s, %q}", entries[0].oid, entries[0].message, commit4, "fourth commit")
+		}
+		if entries[1].oid != commit3 || entries[1].message != "third commit" {
+			t.Fatalf("log[1] = {%s, %q}, want {%s, %q}", entries[1].oid, entries[1].message, commit3, "third commit")
+		}
+		if entries[2].oid != commit2 || entries[2].message != "second commit" {
+			t.Fatalf("log[2] = {%s, %q}, want {%s, %q}", entries[2].oid, entries[2].message, commit2, "second commit")
+		}
+		if entries[3].oid != commit1 || entries[3].message != "first commit" {
+			t.Fatalf("log[3] = {%s, %q}, want {%s, %q}", entries[3].oid, entries[3].message, commit1, "first commit")
+		}
+	}
 }
 
 func countIndexEntries(idx *Index) int {
