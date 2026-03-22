@@ -881,38 +881,38 @@ func (repo *Repo) Merge(input MergeInput) (*MergeResult, error) {
 			}
 		}
 
-		// create lock file for index
-		lock, err := NewLockFile(repo.repoPath, "index")
-		if err != nil {
-			return nil, err
-		}
-		defer lock.Close()
-
-		// read index
-		idx, err := repo.readIndex()
-		if err != nil {
-			return nil, err
-		}
-
-		// update the work dir
-		if err := repo.migrate(cleanDiff, idx, true, nil); err != nil {
-			return nil, err
-		}
-
-		for path, conflict := range conflicts {
-			// add conflict to index
-			idx.addConflictEntries(path, [3]*TreeEntry{conflict.Base, conflict.Target, conflict.Source})
-			// write renamed file if necessary
-			if conflict.Renamed != nil {
-				repo.objectToFile(conflict.Renamed.Path, conflict.Renamed.TreeEntry)
+		// update the index under a lock
+		if err := func() error {
+			lock, err := NewLockFile(repo.repoPath, "index")
+			if err != nil {
+				return err
 			}
-		}
+			defer lock.Close()
 
-		// write the index
-		if err := idx.Write(lock.File); err != nil {
+			idx, err := repo.readIndex()
+			if err != nil {
+				return err
+			}
+
+			if err := repo.migrate(cleanDiff, idx, true, nil); err != nil {
+				return err
+			}
+
+			for path, conflict := range conflicts {
+				idx.addConflictEntries(path, [3]*TreeEntry{conflict.Base, conflict.Target, conflict.Source})
+				if conflict.Renamed != nil {
+					repo.objectToFile(conflict.Renamed.Path, conflict.Renamed.TreeEntry)
+				}
+			}
+
+			if err := idx.Write(lock.File); err != nil {
+				return err
+			}
+			lock.Success = true
+			return nil
+		}(); err != nil {
 			return nil, err
 		}
-		lock.Success = true
 
 		// exit early if there were conflicts
 		if len(conflicts) > 0 {

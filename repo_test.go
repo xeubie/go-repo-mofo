@@ -1267,3 +1267,313 @@ int slow_square(int x) {
 	})
 }
 
+func TestCherryPick(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B ------------ D' [master]
+	//        \
+	//         \
+	//          C --- D --- E [foo]
+
+	addFile(t, repo, "readme.md", "a")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "readme.md", "b")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+
+	// commit c modifies a different file, so it shouldn't cause a conflict
+	addFile(t, repo, "stuff.md", "c")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "readme.md", "d")
+	commitD, err := repo.Commit(CommitMetadata{Message: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "readme.md", "e")
+	if _, err := repo.Commit(CommitMetadata{Message: "e"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result, err := repo.Merge(MergeInput{
+		Kind:   MergeKindPick,
+		Action: MergeActionNew,
+		Source: RefOrOid{OID: commitD},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result.Kind)
+	}
+
+	// make sure stuff.md does not exist
+	if _, err := os.Stat(filepath.Join(repo.workPath, "stuff.md")); !os.IsNotExist(err) {
+		t.Fatal("stuff.md should not exist after cherry-pick")
+	}
+
+	// if we try cherry-picking the same commit again, it succeeds again
+	result2, err := repo.Merge(MergeInput{
+		Kind:     MergeKindPick,
+		Action:   MergeActionNew,
+		Source:   RefOrOid{OID: commitD},
+		Metadata: &CommitMetadata{Message: "d", AllowEmpty: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+}
+
+func TestCherryPickConflict(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B ------------ D' [master]
+	//        \
+	//         \
+	//          D --------- E [foo]
+
+	addFile(t, repo, "readme.md", "a")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "readme.md", "b")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "readme.md", "c")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "readme.md", "d")
+	commitD, err := repo.Commit(CommitMetadata{Message: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "readme.md", "e")
+	if _, err := repo.Commit(CommitMetadata{Message: "e"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result, err := repo.Merge(MergeInput{
+		Kind:   MergeKindPick,
+		Action: MergeActionNew,
+		Source: RefOrOid{OID: commitD},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// verify readme.md has conflict markers
+	content := readWorkFile(t, repo, "readme.md")
+	if !strings.Contains(content, "<<<<<<< target (master)") {
+		t.Fatalf("expected conflict markers, got: %s", content)
+	}
+	if !strings.Contains(content, ">>>>>>> source (") {
+		t.Fatalf("expected source marker, got: %s", content)
+	}
+
+	// can't cherry-pick again with an unresolved cherry-pick
+	_, err = repo.Merge(MergeInput{
+		Kind:   MergeKindPick,
+		Action: MergeActionNew,
+		Source: RefOrOid{OID: commitD},
+	})
+	if err == nil {
+		t.Fatal("expected error for cherry-pick during unresolved conflict")
+	}
+
+	// can't continue cherry-pick with unresolved conflicts
+	_, err = repo.Merge(MergeInput{Kind: MergeKindPick, Action: MergeActionCont})
+	if err == nil {
+		t.Fatal("expected error for continue with unresolved conflicts")
+	}
+
+	// resolve conflict
+	addFile(t, repo, "readme.md", "e")
+
+	// can't continue with .kind = merge
+	_, err = repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err == nil {
+		t.Fatal("expected error for continue with wrong merge kind")
+	}
+
+	// continue cherry-pick
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindPick, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+}
+
+func TestLog(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B --- C --------- G --- H [master]
+	//        \               /
+	//         \             /
+	//          D --- E --- F [foo]
+
+	addFile(t, repo, "master.md", "a")
+	commitA, err := repo.Commit(CommitMetadata{Message: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "master.md", "b")
+	commitB, err := repo.Commit(CommitMetadata{Message: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "foo.md", "d")
+	commitD, err := repo.Commit(CommitMetadata{Message: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+	addFile(t, repo, "master.md", "c")
+	commitC, err := repo.Commit(CommitMetadata{Message: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "foo.md", "e")
+	commitE, err := repo.Commit(CommitMetadata{Message: "e"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "foo.md", "f")
+	commitF, err := repo.Commit(CommitMetadata{Message: "f"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	mergeResult, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mergeResult.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", mergeResult.Kind)
+	}
+	commitG := mergeResult.OID
+
+	addFile(t, repo, "master.md", "h")
+	commitH, err := repo.Commit(CommitMetadata{Message: "h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allOIDs := map[string]bool{
+		commitA: true, commitB: true, commitC: true,
+		commitD: true, commitE: true, commitF: true,
+		commitG: true, commitH: true,
+	}
+
+	// assert that all commits have been found in the log and they aren't repeated
+	{
+		iter, err := repo.Log(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			obj, err := iter.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if obj == nil {
+				break
+			}
+			if !allOIDs[obj.OID] {
+				t.Fatalf("unexpected or repeated commit %s", obj.OID)
+			}
+			delete(allOIDs, obj.OID)
+			obj.Close()
+		}
+		if len(allOIDs) != 0 {
+			t.Fatalf("not all commits found in log, remaining: %v", allOIDs)
+		}
+	}
+
+	// assert that only some commits have been found in the log
+	someOIDs := map[string]bool{
+		commitC: true, commitD: true, commitE: true,
+		commitF: true, commitG: true,
+	}
+	{
+		iter, err := repo.Log([]string{commitG})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := iter.Exclude(commitB); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			obj, err := iter.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if obj == nil {
+				break
+			}
+			if !someOIDs[obj.OID] {
+				t.Fatalf("unexpected or repeated commit %s", obj.OID)
+			}
+			delete(someOIDs, obj.OID)
+			obj.Close()
+		}
+		if len(someOIDs) != 0 {
+			t.Fatalf("not all expected commits found, remaining: %v", someOIDs)
+		}
+	}
+
+	// iterate over all objects
+	{
+		objIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll, Full: true})
+		objIter.Include(commitG)
+		count := 0
+		for {
+			obj, err := objIter.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if obj == nil {
+				break
+			}
+			count++
+			obj.Close()
+		}
+		if count != 20 {
+			t.Fatalf("expected 20 objects, got %d", count)
+		}
+	}
+}
+
