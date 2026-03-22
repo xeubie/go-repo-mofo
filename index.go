@@ -283,6 +283,24 @@ func (idx *Index) addEntry(entry *IndexEntry) {
 	idx.rootChildren[child] = true
 }
 
+// addConflictEntries adds conflict entries (stages 1-3) for the given path.
+// treeEntries[0] = base (stage 1), [1] = target (stage 2), [2] = source (stage 3).
+func (idx *Index) addConflictEntries(filePath string, treeEntries [3]*TreeEntry) {
+	for i, te := range treeEntries {
+		if te == nil {
+			continue
+		}
+		stage := uint16(i + 1)
+		entry := &IndexEntry{
+			mode:  te.Mode,
+			oid:   te.OID,
+			flags: (stage << 12) | (uint16(len(filePath)) & 0xFFF),
+			path:  filePath,
+		}
+		idx.addEntry(entry)
+	}
+}
+
 // RemovePath removes a path (or all paths under a directory) from the index.
 // If removedPaths is non-nil, removed paths are recorded in it.
 func (idx *Index) RemovePath(filePath string, removedPaths map[string]bool) {

@@ -3,6 +3,7 @@ package repomofo
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -205,3 +206,1064 @@ func Simple(t *testing.T, store ObjectStore) {
 		}
 	}
 }
+
+func TestMerge(t *testing.T) {
+	tempDir := t.TempDir()
+	workPath := filepath.Join(tempDir, "repo")
+
+	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+
+	_, err := InitRepo(workPath, opts)
+	if err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	repo, err := OpenRepo(workPath, opts)
+	if err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+
+	// A --- B --- C --------- J --- K [master]
+	//        \               /
+	//         \             /
+	//          D --- E --- F [foo]
+	//           \
+	//            \
+	//             G --- H [bar]
+
+	addFile(t, repo, "master.md", "a")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "master.md", "b")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "foo.md", "d")
+	commitD, err := repo.Commit(CommitMetadata{Message: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.AddBranch(AddBranchInput{Name: "bar"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "bar"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "bar.md", "g")
+	if _, err := repo.Commit(CommitMetadata{Message: "g"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "bar.md", "h")
+	commitH, err := repo.Commit(CommitMetadata{Message: "h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = commitH
+
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "master.md", "c")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "foo.md", "e")
+	if _, err := repo.Commit(CommitMetadata{Message: "e"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "foo.md", "f")
+	if _, err := repo.Commit(CommitMetadata{Message: "f"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// merge foo into master
+	mergeResult, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mergeResult.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", mergeResult.Kind)
+	}
+	commitJ := mergeResult.OID
+
+	addFile(t, repo, "master.md", "k")
+	commitK, err := repo.Commit(CommitMetadata{Message: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// there are multiple common ancestors, b and d,
+	// but d is the best one because it is a descendent of b
+	ancestorKH, err := commonAncestor(repo, commitK, commitH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ancestorKH != commitD {
+		t.Fatalf("expected ancestor %s, got %s", commitD, ancestorKH)
+	}
+
+	// if one commit is an ancestor of the other, it is the best common ancestor
+	ancestorKJ, err := commonAncestor(repo, commitK, commitJ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ancestorKJ != commitJ {
+		t.Fatalf("expected ancestor %s, got %s", commitJ, ancestorKJ)
+	}
+
+	// if we try merging foo again, it does nothing
+	{
+		mergeResult, err := repo.Merge(MergeInput{
+			Kind:   MergeKindFull,
+			Action: MergeActionNew,
+			Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mergeResult.Kind != MergeResultNothing {
+			t.Fatalf("expected nothing, got %d", mergeResult.Kind)
+		}
+	}
+
+	// if we try merging master into foo, it fast forwards
+	{
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+			t.Fatal(err)
+		}
+		mergeResult, err := repo.Merge(MergeInput{
+			Kind:   MergeKindFull,
+			Action: MergeActionNew,
+			Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mergeResult.Kind != MergeResultFastForward {
+			t.Fatalf("expected fast_forward, got %d", mergeResult.Kind)
+		}
+
+		headOID, err := repo.ReadHeadRecurMaybe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if headOID != commitK {
+			t.Fatalf("expected HEAD %s, got %s", commitK, headOID)
+		}
+
+		// make sure file from commit k exists
+		content, err := os.ReadFile(filepath.Join(workPath, "master.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "k" {
+			t.Fatalf("expected 'k', got %q", string(content))
+		}
+	}
+}
+
+func TestMergeSideBranch(t *testing.T) {
+	tempDir := t.TempDir()
+	workPath := filepath.Join(tempDir, "repo")
+
+	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+
+	_, err := InitRepo(workPath, opts)
+	if err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	repo, err := OpenRepo(workPath, opts)
+	if err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+
+	//           C <------ D [side]
+	//          /           \
+	//         /             \
+	// A <--- B <---- E <---- F <---- G [master]
+	//                 \
+	//                  \
+	//                   \
+	//                    H <---- I <---- J [topic]
+
+	addFile(t, repo, "master.md", "a")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "master.md", "b")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.AddBranch(AddBranchInput{Name: "side"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "side"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "side.md", "c")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "side.md", "d")
+	if _, err := repo.Commit(CommitMetadata{Message: "d"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "master.md", "e")
+	commitE, err := repo.Commit(CommitMetadata{Message: "e"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.AddBranch(AddBranchInput{Name: "topic"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// commit f (merge side into master)
+	mergeResult, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "side"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mergeResult.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", mergeResult.Kind)
+	}
+
+	addFile(t, repo, "master.md", "g")
+	commitG, err := repo.Commit(CommitMetadata{Message: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "topic"}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "topic.md", "h")
+	if _, err := repo.Commit(CommitMetadata{Message: "h"}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "topic.md", "i")
+	if _, err := repo.Commit(CommitMetadata{Message: "i"}); err != nil {
+		t.Fatal(err)
+	}
+
+	addFile(t, repo, "topic.md", "j")
+	commitJ, err := repo.Commit(CommitMetadata{Message: "j"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ancestorGJ, err := commonAncestor(repo, commitG, commitJ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ancestorGJ != commitE {
+		t.Fatalf("expected ancestor %s, got %s", commitE, ancestorGJ)
+	}
+}
+
+func initTestRepo(t *testing.T) *Repo {
+	t.Helper()
+	tempDir := t.TempDir()
+	workPath := filepath.Join(tempDir, "repo")
+	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	if _, err := InitRepo(workPath, opts); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := OpenRepo(workPath, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func switchBranch(t *testing.T, repo *Repo, name string) {
+	t.Helper()
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: name}}, UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mergeFoo(t *testing.T, repo *Repo) *MergeResult {
+	t.Helper()
+	result, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func readWorkFile(t *testing.T, repo *Repo, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repo.workPath, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestMergeConflictSameFile(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B --- D [master]
+	//  \         /
+	//   \       /
+	//    `---- C [foo]
+
+	addFile(t, repo, "f.txt", "a\nb\nc")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt", "a\nx\nc")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt", "a\ny\nc")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// verify f.txt has conflict markers
+	content := readWorkFile(t, repo, "f.txt")
+	if !strings.Contains(content, "<<<<<<< target (master)") {
+		t.Fatalf("expected conflict markers in f.txt, got: %s", content)
+	}
+	if !strings.Contains(content, ">>>>>>> source (foo)") {
+		t.Fatalf("expected source marker in f.txt, got: %s", content)
+	}
+
+	// can't merge again with an unresolved merge
+	_, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for merge during unresolved conflict")
+	}
+
+	// can't continue merge with unresolved conflicts
+	_, err = repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err == nil {
+		t.Fatal("expected error for continue with unresolved conflicts")
+	}
+
+	// resolve conflict and continue
+	addFile(t, repo, "f.txt", "a\nx\nc")
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+func TestMergeConflictSameFileEmptyBase(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B --- D [master]
+	//  \         /
+	//   \       /
+	//    `---- C [foo]
+	// commit A (base) is empty
+
+	if _, err := repo.Commit(CommitMetadata{Message: "a", AllowEmpty: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt", "a\nx\nc\n")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt", "a\ny\nc\n")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// verify f.txt has conflict markers
+	content := readWorkFile(t, repo, "f.txt")
+	if !strings.Contains(content, "<<<<<<< target (master)") {
+		t.Fatalf("expected conflict markers in f.txt, got: %s", content)
+	}
+
+	// can't merge again with an unresolved merge
+	_, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for merge during unresolved conflict")
+	}
+
+	// can't continue merge with unresolved conflicts
+	_, err = repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err == nil {
+		t.Fatal("expected error for continue with unresolved conflicts")
+	}
+
+	// resolve conflict and continue
+	addFile(t, repo, "f.txt", "a\ny\nc\n")
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+func TestMergeConflictSameFileAutoresolved(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B --- D [master]
+	//  \         /
+	//   \       /
+	//    `---- C [foo]
+
+	addFile(t, repo, "f.txt", "a\nb\nc")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt", "x\nb\nc")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt", "a\nb\ny")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultSuccess {
+		t.Fatalf("expected success (autoresolved), got %d", result.Kind)
+	}
+
+	// verify f.txt has been autoresolved
+	content := readWorkFile(t, repo, "f.txt")
+	if content != "x\nb\ny\n" {
+		t.Fatalf("expected autoresolved content, got %q", content)
+	}
+
+	// merging foo again does nothing
+	result2 := mergeFoo(t, repo)
+	if result2.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result2.Kind)
+	}
+}
+
+func TestMergeConflictSameFileAutoresolvedNeighboringLines(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B --- D [master]
+	//  \         /
+	//   \       /
+	//    `---- C [foo]
+
+	addFile(t, repo, "f.txt", "a\nb\nc\nd")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt", "a\nb\ne\nd")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt", "a\nf\nc\nd")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	// for git backend (diff3), neighboring line changes produce a conflict
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+}
+
+func TestMergeConflictModifyDelete(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// target modifies, source deletes
+
+	addFile(t, repo, "f.txt", "1")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt", "2")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	if err := repo.Remove([]string{"f.txt"}, RemoveOptions{UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// can't merge again with an unresolved merge
+	_, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for merge during unresolved conflict")
+	}
+
+	// can't continue merge with unresolved conflicts
+	_, err = repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err == nil {
+		t.Fatal("expected error for continue with unresolved conflicts")
+	}
+
+	// resolve conflict and continue
+	if err := repo.Add([]string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+func TestMergeConflictDeleteModify(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// target deletes, source modifies
+
+	addFile(t, repo, "f.txt", "1")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Remove([]string{"f.txt"}, RemoveOptions{UpdateWorkDir: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt", "2")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// can't merge again with an unresolved merge
+	_, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for merge during unresolved conflict")
+	}
+
+	// can't continue merge with unresolved conflicts
+	_, err = repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err == nil {
+		t.Fatal("expected error for continue with unresolved conflicts")
+	}
+
+	// resolve conflict and continue
+	if err := repo.Add([]string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+func TestMergeConflictFileDir(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// target has file f.txt, source has dir f.txt/
+
+	addFile(t, repo, "hi.txt", "hi")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt", "hi")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt/g.txt", "hi")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// make sure renamed file exists
+	if _, err := os.Stat(filepath.Join(repo.workPath, "f.txt~master")); err != nil {
+		t.Fatalf("expected renamed file f.txt~master: %v", err)
+	}
+
+	// can't merge again with an unresolved merge
+	_, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for merge during unresolved conflict")
+	}
+
+	// resolve conflict and continue
+	if err := repo.Add([]string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+func TestMergeConflictDirFile(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// target has dir f.txt/, source has file f.txt
+
+	addFile(t, repo, "hi.txt", "hi")
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	addFile(t, repo, "f.txt/g.txt", "hi")
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+	addFile(t, repo, "f.txt", "hi")
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "master")
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// make sure renamed file exists
+	if _, err := os.Stat(filepath.Join(repo.workPath, "f.txt~foo")); err != nil {
+		t.Fatalf("expected renamed file f.txt~foo: %v", err)
+	}
+
+	// can't merge again with an unresolved merge
+	_, err := repo.Merge(MergeInput{
+		Kind:   MergeKindFull,
+		Action: MergeActionNew,
+		Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for merge during unresolved conflict")
+	}
+
+	// resolve conflict and continue
+	if err := repo.Add([]string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+func TestMergeConflictBinary(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// A --- B --------- D [master]
+	//  \               /
+	//   \             /
+	//    C ---------- [foo]
+
+	// create binary content: alternating bytes and newlines
+	var bin [256]byte
+	for i := range bin {
+		if i%2 == 1 {
+			bin[i] = '\n'
+		} else {
+			bin[i] = byte(i % 255)
+		}
+	}
+
+	addFile(t, repo, "bin", string(bin[:]))
+	if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	switchBranch(t, repo, "foo")
+
+	bin[0] = 1
+	addFile(t, repo, "bin", string(bin[:]))
+	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+		t.Fatal(err)
+	}
+
+	switchBranch(t, repo, "master")
+
+	bin[0] = 2
+	addFile(t, repo, "bin", string(bin[:]))
+	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := mergeFoo(t, repo)
+	if result.Kind != MergeResultConflict {
+		t.Fatalf("expected conflict, got %d", result.Kind)
+	}
+
+	// verify no lines are longer than one byte
+	// so we know that conflict markers haven't been added
+	content := readWorkFile(t, repo, "bin")
+	for _, line := range strings.Split(content, "\n") {
+		if len(line) > 1 {
+			t.Fatalf("expected no lines longer than 1 byte (no conflict markers in binary), got line of length %d", len(line))
+		}
+	}
+
+	// resolve conflict and continue
+	if err := repo.Add([]string{"bin"}); err != nil {
+		t.Fatal(err)
+	}
+	result2, err := repo.Merge(MergeInput{Kind: MergeKindFull, Action: MergeActionCont})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Kind != MergeResultSuccess {
+		t.Fatalf("expected success, got %d", result2.Kind)
+	}
+
+	// merging foo again does nothing
+	result3 := mergeFoo(t, repo)
+	if result3.Kind != MergeResultNothing {
+		t.Fatalf("expected nothing, got %d", result3.Kind)
+	}
+}
+
+// demonstrates an example of git shuffling lines unexpectedly
+// when auto-resolving a merge conflict
+func TestMergeConflictShuffle(t *testing.T) {
+	// from https://pijul.org/manual/why_pijul.html
+	t.Run("simple", func(t *testing.T) {
+		repo := initTestRepo(t)
+
+		// A --- B --- C --- E [master]
+		//  \               /
+		//   \             /
+		//    `---------- D [foo]
+
+		addFile(t, repo, "f.txt", "a\nb")
+		if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+			t.Fatal(err)
+		}
+		addFile(t, repo, "f.txt", "g\na\nb")
+		if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+			t.Fatal(err)
+		}
+		addFile(t, repo, "f.txt", "a\nb\ng\na\nb")
+		if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+			t.Fatal(err)
+		}
+		switchBranch(t, repo, "foo")
+		addFile(t, repo, "f.txt", "a\nx\nb")
+		if _, err := repo.Commit(CommitMetadata{Message: "d"}); err != nil {
+			t.Fatal(err)
+		}
+		switchBranch(t, repo, "master")
+
+		result := mergeFoo(t, repo)
+		if result.Kind != MergeResultSuccess {
+			t.Fatalf("expected success, got %d", result.Kind)
+		}
+
+		// git shuffles lines
+		content := readWorkFile(t, repo, "f.txt")
+		expected := "a\nx\nb\ng\na\nb\n"
+		if content != expected {
+			t.Fatalf("expected %q, got %q", expected, content)
+		}
+
+		// merging foo again does nothing
+		result2 := mergeFoo(t, repo)
+		if result2.Kind != MergeResultNothing {
+			t.Fatalf("expected nothing, got %d", result2.Kind)
+		}
+	})
+
+	// from https://tahoe-lafs.org/~zooko/badmerge/concrete-good-semantics.html
+	t.Run("concrete", func(t *testing.T) {
+		repo := initTestRepo(t)
+
+		// A --- B --- C --- E [master]
+		//  \               /
+		//   \             /
+		//    `---------- D [foo]
+
+		commitA := `int square(int x) {
+  int y = x;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++) y += x;
+  return y;
+}`
+		commitB := `int very_slow_square(int x) {
+  int y = 0;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++)
+    for (int j = 0; j < x; j++)
+      y += 1;
+  return y;
+}
+
+int square(int x) {
+  int y = x;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++) y += x;
+  return y;
+}`
+		commitC := `int square(int x) {
+  int y = x;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  return y * x;
+}
+
+int very_slow_square(int x) {
+  int y = 0;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++)
+    for (int j = 0; j < x; j++)
+      y += 1;
+  return y;
+}
+
+int slow_square(int x) {
+  int y = x;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++) y += x;
+  return y;
+}`
+		commitD := `int square(int x) {
+  int y = 0;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++) y += x;
+  return y;
+}`
+
+		addFile(t, repo, "f.txt", commitA)
+		if _, err := repo.Commit(CommitMetadata{Message: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
+			t.Fatal(err)
+		}
+		addFile(t, repo, "f.txt", commitB)
+		if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
+			t.Fatal(err)
+		}
+		addFile(t, repo, "f.txt", commitC)
+		if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
+			t.Fatal(err)
+		}
+		switchBranch(t, repo, "foo")
+		addFile(t, repo, "f.txt", commitD)
+		if _, err := repo.Commit(CommitMetadata{Message: "d"}); err != nil {
+			t.Fatal(err)
+		}
+		switchBranch(t, repo, "master")
+
+		mergeFoo(t, repo)
+
+		// git backend expected result
+		content := readWorkFile(t, repo, "f.txt")
+		expected := `int square(int x) {
+  int y = 0;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  return y * x;
+}
+
+int very_slow_square(int x) {
+  int y = 0;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++)
+    for (int j = 0; j < x; j++)
+      y += 1;
+  return y;
+}
+
+int slow_square(int x) {
+  int y = x;
+  /* Update y to equal the result. */
+  /* Question: what is the order of magnitude of this algorithm with respect to x? */
+  for (int i = 0; i < x; i++) y += x;
+  return y;
+}
+`
+		if content != expected {
+			t.Fatalf("unexpected merge result.\nexpected:\n%s\ngot:\n%s", expected, content)
+		}
+	})
+}
+
