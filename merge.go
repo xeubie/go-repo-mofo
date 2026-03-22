@@ -685,8 +685,9 @@ const (
 type MergeAction int
 
 const (
-	MergeActionNew  MergeAction = iota
-	MergeActionCont             // --continue
+	MergeActionNew   MergeAction = iota
+	MergeActionCont              // --continue
+	MergeActionAbort             // --abort
 )
 
 type MergeInput struct {
@@ -1035,6 +1036,23 @@ func (repo *Repo) Merge(input MergeInput) (*MergeResult, error) {
 		}
 
 		return &MergeResult{Kind: MergeResultSuccess, OID: commitOID}, nil
+
+	case MergeActionAbort:
+		targetOID := targetOIDMaybe
+		if targetOID == "" {
+			return nil, errors.New("target oid not found")
+		}
+		removeMergeState(repo)
+		_, err := repo.Switch(SwitchInput{
+			Kind:          SwitchKindReset,
+			Target:        RefOrOid{OID: targetOID},
+			UpdateWorkDir: true,
+			Force:         true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &MergeResult{Kind: MergeResultSuccess}, nil
 	}
 
 	return nil, errors.New("invalid merge action")

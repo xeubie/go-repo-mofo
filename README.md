@@ -29,10 +29,12 @@ GoRepoMofo implements Git in Go. See below for the functionality it currently ha
 
 ## Comparison to [go-git](https://github.com/go-git/go-git)
 
-* GoRepoMofo has no dependencies (versus go-git's two dozen deps) and is much smaller in line count
-* Both support custom object stores (see the [MemoryObjectStore](object_memory.go) and how it is used in the [repo test](repo_test.go))
+* GoRepoMofo has no dependencies (versus go-git's two dozen deps)
+* GoRepoMofo is only around 10k lines of code (versus go-git's 80k lines)
+* GoRepoMofo supports three-way merge and conflict resolution (go-git only supports simple fast-forward merges)
+* go-git supports a lot of stuff that GoRepoMofo doesn't (client-side networking, stash, blame, etc)
 * Both support server-side networking (`receive-pack` and `upload-pack`)
-* go-git is more mature
+* Both support custom object stores (see the [MemoryObjectStore](object_memory.go) and how it is used in the [repo test](repo_test.go))
 * GoRepoMofo is a much cooler name
 
 ## Using as a library
@@ -70,6 +72,8 @@ restore       restore files in the work dir.
 log           show commit logs.
 config        add, remove, and list config options.
 remote        add, remove, and list remotes.
+merge         join two or more development histories together.
+cherry-pick   apply the changes introduced by some existing commits.
 receive-pack  receive what is pushed into the repository.
 upload-pack   send what is fetched from the repository.
 http-backend  a CGI program forwarding receive-pack and upload-pack over HTTP.

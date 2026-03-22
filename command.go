@@ -26,6 +26,8 @@ const (
 	CommandLog
 	CommandConfig
 	CommandRemote
+	CommandMerge
+	CommandCherryPick
 	CommandReceivePack
 	CommandUploadPack
 	CommandHTTPBackend
@@ -49,6 +51,8 @@ var commandNames = map[CommandKind]string{
 	CommandLog:         "log",
 	CommandConfig:      "config",
 	CommandRemote:      "remote",
+	CommandMerge:       "merge",
+	CommandCherryPick:  "cherry-pick",
 	CommandReceivePack: "receive-pack",
 	CommandUploadPack:  "upload-pack",
 	CommandHTTPBackend: "http-backend",
@@ -72,6 +76,8 @@ var commandDescrips = map[CommandKind]string{
 	CommandLog:         "show commit logs.",
 	CommandConfig:      "add, remove, and list config options.",
 	CommandRemote:      "add, remove, and list remotes.",
+	CommandMerge:       "join two or more development histories together.",
+	CommandCherryPick:  "apply the changes introduced by some existing commits.",
 	CommandReceivePack: "receive what is pushed into the repository.",
 	CommandUploadPack:  "send what is fetched from the repository.",
 	CommandHTTPBackend: "a CGI program forwarding receive-pack and upload-pack over HTTP.",
@@ -134,6 +140,18 @@ remove remote:
     repomofo remote rm origin
 list remotes:
     repomofo remote list`,
+	CommandMerge: `merge branch:
+    repomofo merge mybranch
+continue after merge conflict resolution:
+    repomofo merge --continue
+abort merge:
+    repomofo merge --abort`,
+	CommandCherryPick: `cherry pick a commit:
+    repomofo cherry-pick a1b2c3...
+continue after conflict resolution:
+    repomofo cherry-pick --continue
+abort cherry-pick:
+    repomofo cherry-pick --abort`,
 	CommandReceivePack: `repomofo receive-pack <directory>`,
 	CommandUploadPack:  `repomofo upload-pack <directory>`,
 	CommandHTTPBackend: `repomofo http-backend`,
@@ -302,6 +320,10 @@ type ResetAddCommand struct {
 	Target RefOrOid // OID only
 }
 
+type MergeCommand struct {
+	Input MergeInput
+}
+
 type ReceivePackCommand struct {
 	Dir     string
 	Options ReceivePackOptions
@@ -328,6 +350,7 @@ type Command struct {
 	Log         *LogCommand
 	Config      *ConfigCommand
 	Remote      *ConfigCommand
+	Merge       *MergeCommand
 	ReceivePack *ReceivePackCommand
 	UploadPack  *UploadPackCommand
 }
@@ -563,6 +586,39 @@ func parseCommand(cmdArgs *CommandArgs) *Command {
 			targets = append(targets, *target)
 		}
 		return &Command{Kind: CommandLog, Log: &LogCommand{Targets: targets}}
+
+	case CommandMerge, CommandCherryPick:
+		kind := MergeKindFull
+		if *cmdArgs.CommandKind == CommandCherryPick {
+			kind = MergeKindPick
+		}
+
+		if cmdArgs.Contains("--continue") {
+			if len(cmdArgs.PositionalArgs) != 0 {
+				return nil
+			}
+			return &Command{Kind: *cmdArgs.CommandKind, Merge: &MergeCommand{
+				Input: MergeInput{Kind: kind, Action: MergeActionCont},
+			}}
+		} else if cmdArgs.Contains("--abort") {
+			if len(cmdArgs.PositionalArgs) != 0 {
+				return nil
+			}
+			return &Command{Kind: *cmdArgs.CommandKind, Merge: &MergeCommand{
+				Input: MergeInput{Kind: kind, Action: MergeActionAbort},
+			}}
+		} else {
+			if len(cmdArgs.PositionalArgs) != 1 {
+				return nil
+			}
+			source := RefOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+			if source == nil {
+				return nil
+			}
+			return &Command{Kind: *cmdArgs.CommandKind, Merge: &MergeCommand{
+				Input: MergeInput{Kind: kind, Action: MergeActionNew, Source: *source},
+			}}
+		}
 
 	case CommandReceivePack:
 		if len(cmdArgs.PositionalArgs) != 1 {

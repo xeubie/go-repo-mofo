@@ -1222,7 +1222,6 @@ func TestRun(t *testing.T) {
 			t.Fatal("commit4Stuff is empty")
 		}
 	}
-	_ = commit4Stuff
 
 	// create a branch with slashes
 	err = Run(opts, []string{"branch", "add", "a/b/c"}, workPath, runOpts)
@@ -1394,6 +1393,82 @@ func TestRun(t *testing.T) {
 			t.Fatalf("log[3] = {%s, %q}, want {%s, %q}", entries[3].oid, entries[3].message, commit1, "first commit")
 		}
 	}
+
+	// common ancestor
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		ancestor, err := commonAncestor(repo, commit4, commit4Stuff)
+		if err != nil {
+			t.Fatalf("commonAncestor failed: %v", err)
+		}
+		if ancestor != commit3 {
+			t.Fatalf("expected ancestor %s, got %s", commit3, ancestor)
+		}
+	}
+
+	// merge
+	{
+		// both branches modified hello.txt, so there is a conflict
+		err = Run(opts, []string{"merge", "stuff"}, workPath, runOpts)
+		if err != ErrHandled {
+			t.Fatalf("expected ErrHandled for merge conflict, got %v", err)
+		}
+
+		// abort the merge
+		err = Run(opts, []string{"merge", "--abort"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("merge --abort failed: %v", err)
+		}
+
+		// merge again
+		err = Run(opts, []string{"merge", "stuff"}, workPath, runOpts)
+		if err != ErrHandled {
+			t.Fatalf("expected ErrHandled for merge conflict, got %v", err)
+		}
+
+		// solve the conflict
+		writeFile(t, workPath, "hello.txt", "hello, world once again!")
+		err = Run(opts, []string{"add", "hello.txt"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("add hello.txt failed: %v", err)
+		}
+		err = Run(opts, []string{"merge", "--continue"}, workPath, runOpts)
+		if err != nil {
+			t.Fatalf("merge --continue failed: %v", err)
+		}
+
+		// change from stuff exists
+		stuffContent := readFile(t, workPath, "stuff.txt")
+		if stuffContent != "this was made on the stuff branch, commit 4!" {
+			t.Fatalf("stuff.txt = %q, want %q", stuffContent, "this was made on the stuff branch, commit 4!")
+		}
+
+		// change from master still exists
+		goodbyeContent := readFile(t, workPath, "goodbye.txt")
+		if goodbyeContent != "goodbye, world once again!" {
+			t.Fatalf("goodbye.txt = %q, want %q", goodbyeContent, "goodbye, world once again!")
+		}
+	}
+
+	// get HEAD contents (commit5)
+	var commit5 string
+	{
+		repo, err := OpenRepo(workPath, opts)
+		if err != nil {
+			t.Fatalf("open repo failed: %v", err)
+		}
+		commit5, err = repo.ReadHeadRecurMaybe()
+		if err != nil {
+			t.Fatalf("read HEAD failed: %v", err)
+		}
+		if commit5 == "" {
+			t.Fatal("commit5 is empty")
+		}
+	}
+	_ = commit5
 
 	// config
 	{
@@ -1645,4 +1720,13 @@ func writeFile(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 		t.Fatalf("write %s failed: %v", name, err)
 	}
+}
+
+func readFile(t *testing.T, dir, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatalf("read %s failed: %v", name, err)
+	}
+	return string(data)
 }

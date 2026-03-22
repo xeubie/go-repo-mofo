@@ -428,6 +428,48 @@ func runCommand(opts RepoOpts, cmd *Command, cwdPath string, runOpts RunOpts) er
 		case ConfigRemove:
 			return repo.RemoveRemote(cmd.Remote.Name)
 		}
+	case CommandMerge, CommandCherryPick:
+		repo, err := OpenRepo(cwdPath, opts)
+		if err != nil {
+			return ErrRepoNotFound
+		}
+		result, err := repo.Merge(cmd.Merge.Input)
+		if err != nil {
+			return err
+		}
+		switch result.Kind {
+		case MergeResultSuccess:
+			// nothing to print
+		case MergeResultNothing:
+			fmt.Fprintf(runOpts.Out, "already up to date\n")
+		case MergeResultFastForward:
+			fmt.Fprintf(runOpts.Out, "fast-forward\n")
+		case MergeResultConflict:
+			for path, conflict := range result.Conflicts {
+				if conflict.Renamed != nil {
+					conflictType := "file/directory"
+					if conflict.Target == nil {
+						conflictType = "directory/file"
+					}
+					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): there is a directory with name %s. adding %s as %s\n", conflictType, path, path, conflict.Renamed.Path)
+				} else if conflict.Target != nil && conflict.Source != nil {
+					conflictType := "content"
+					if conflict.Base == nil {
+						conflictType = "add/add"
+					}
+					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): merge conflict in %s\n", conflictType, path)
+				} else {
+					conflictType := "modify/delete"
+					if conflict.Target == nil {
+						conflictType = "delete/modify"
+					}
+					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): %s\n", conflictType, path)
+				}
+			}
+			return ErrHandled
+		}
+		return nil
+
 	case CommandReceivePack:
 		dir, err := filepath.Abs(cmd.ReceivePack.Dir)
 		if err != nil {
