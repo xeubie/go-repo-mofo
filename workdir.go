@@ -744,6 +744,30 @@ func (repo *Repo) migrate(changes map[string]TreeChange, idx *index, updateWorkD
 		}
 	}
 
+	// if there are any unresolved conflicts, either exit with an error
+	// or (if -f is being used) replace the conflicting index entries
+	for path, entries := range idx.entries {
+		// ignore non-conflict entries
+		if entries[0] != nil {
+			continue
+		// we can't switch if there is an unresolved merge conflict
+		} else if result != nil {
+			result.Conflict.StaleFiles = append(result.Conflict.StaleFiles, path)
+		// if we are using -f, and the conflicting file isn't being removed,
+		// just add it so the index is updated (making it non-conflicting)
+		// and the work dir is (optionally) updated
+		} else if _, inAddFiles := addFiles[path]; !removeFiles[path] && !inAddFiles {
+			conflictEntry := entries[2]
+			if conflictEntry == nil {
+				conflictEntry = entries[3]
+			}
+			if conflictEntry == nil {
+				return fmt.Errorf("null entry for conflict at %s", path)
+			}
+			addFiles[path] = TreeEntry{OID: conflictEntry.oid, Mode: conflictEntry.mode}
+		}
+	}
+
 	if result != nil && result.hasConflict() {
 		return nil
 	}
@@ -845,6 +869,12 @@ func (repo *Repo) switchDir(input SwitchInput) (*SwitchResult, error) {
 	}
 
 	lock.Success = true
+
+	// if -f, we need to clean up stored merge state as well
+	if input.Force {
+		removeMergeState(repo)
+	}
+
 	return &SwitchResult{Success: true}, nil
 }
 
