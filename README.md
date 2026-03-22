@@ -25,9 +25,23 @@
 ░░▒▒▓▓██████████████████████████████████████████████████████▓▓▒▒░░
 ```
 
-GoRepoMofo implements Git in Go. See below for the functionality it currently has. This project is focused on being useful for running server-side, so it has a complete implementation of `upload-pack` and `receive-pack`.
+GoRepoMofo implements Git in Go. See below for the functionality it currently has.
 
-All of GoRepoMofo's functionality is exposed through the [Repo](repo.go) struct. See the [repo test](repo_test.go) for an example of using it as a library. You can also run it as an executable:
+## Comparison to [go-git](https://github.com/go-git/go-git)
+
+* Both support custom object stores (see the [MemoryObjectStore](object_memory.go) and how it is used in the [repo test](repo_test.go))
+* Both support server-side networking (`upload-pack` and `receive-pack`)
+* go-git supports merge, client-side networking, and in general is more mature
+* GoRepoMofo is about 10 times smaller than go-git (8000 lines vs 80000 lines)
+* GoRepoMofo is a much cooler name
+
+## Using as a library
+
+All of GoRepoMofo's functionality is exposed through the [Repo](repo.go) struct. See the [repo test](repo_test.go) for an example of using it as a library.
+
+## Running as an executable
+
+The built-in command line interface is not meant to perfectly match git's diabolically inconsistent CLI:
 
 ```
 > go run cmd/repomofo/main.go
@@ -61,7 +75,7 @@ upload-pack   send what is fetched from the repository.
 http-backend  a CGI program forwarding receive-pack and upload-pack over HTTP.
 ```
 
-To run the tests:
+## Running the tests
 
 ```
 > go test
