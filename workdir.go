@@ -9,14 +9,24 @@ import (
 	"runtime"
 )
 
+// MergeConflictStatus tracks which conflict slots are present for a path.
+// Slot 1 = base, slot 2 = target (ours), slot 3 = source (theirs).
+type MergeConflictStatus struct {
+	Base   bool
+	Target bool
+	Source bool
+}
+
 // Status represents the current status of the working directory and index.
 type Status struct {
-	Untracked       map[string]bool
-	WorkDirModified map[string]bool
-	WorkDirDeleted  map[string]bool
-	IndexAdded      map[string]bool
-	IndexModified   map[string]bool
-	IndexDeleted    map[string]bool
+	Untracked            map[string]bool
+	WorkDirModified      map[string]bool
+	WorkDirDeleted       map[string]bool
+	IndexAdded           map[string]bool
+	IndexModified        map[string]bool
+	IndexDeleted         map[string]bool
+	UnresolvedConflicts  map[string]MergeConflictStatus
+	ResolvedConflicts    map[string]TreeEntry
 }
 
 func (repo *Repo) status() (*Status, error) {
@@ -31,6 +41,8 @@ func (repo *Repo) status() (*Status, error) {
 	indexAdded := make(map[string]bool)
 	indexModified := make(map[string]bool)
 	indexDeleted := make(map[string]bool)
+	unresolvedConflicts := make(map[string]MergeConflictStatus)
+	resolvedConflicts := make(map[string]TreeEntry)
 
 	// track which index entries are seen in the work dir
 	indexSeen := make(map[string]bool)
@@ -46,21 +58,40 @@ func (repo *Repo) status() (*Status, error) {
 	}
 
 	// build head tree (flat map of all paths)
-	headTree, err := repo.flattenHeadTree()
-	if err != nil {
-		// no head tree (no commits yet) — all index entries are "added"
+	headTree, headErr := repo.flattenHeadTree()
+
+	// read merge source tree if a merge is in progress
+	var mergeSourceTree map[string]TreeEntry
+	if mergeSourceOID, err := readAnyMergeHead(repo); err == nil && mergeSourceOID != "" {
+		mergeSourceTreeOID, err := repo.readCommitTree(mergeSourceOID)
+		if err == nil {
+			mergeSourceTree = make(map[string]TreeEntry)
+			repo.flattenTree(mergeSourceTreeOID, "", mergeSourceTree) //nolint:errcheck
+		}
+	}
+
+	if headErr != nil {
+		// no head tree (no commits yet) — all non-conflict index entries are "added"
 		for path, entries := range idx.entries {
 			if entries[0] != nil {
 				indexAdded[path] = true
+			} else {
+				unresolvedConflicts[path] = MergeConflictStatus{
+					Base:   entries[1] != nil,
+					Target: entries[2] != nil,
+					Source: entries[3] != nil,
+				}
 			}
 		}
 		return &Status{
-			Untracked:       untracked,
-			WorkDirModified: workDirModified,
-			WorkDirDeleted:  workDirDeleted,
-			IndexAdded:      indexAdded,
-			IndexModified:   indexModified,
-			IndexDeleted:    indexDeleted,
+			Untracked:           untracked,
+			WorkDirModified:     workDirModified,
+			WorkDirDeleted:      workDirDeleted,
+			IndexAdded:          indexAdded,
+			IndexModified:       indexModified,
+			IndexDeleted:        indexDeleted,
+			UnresolvedConflicts: unresolvedConflicts,
+			ResolvedConflicts:   resolvedConflicts,
 		}, nil
 	}
 
@@ -68,11 +99,28 @@ func (repo *Repo) status() (*Status, error) {
 	for path, entries := range idx.entries {
 		ie := entries[0]
 		if ie == nil {
+			// conflict entry (slot 0 is empty)
+			unresolvedConflicts[path] = MergeConflictStatus{
+				Base:   entries[1] != nil,
+				Target: entries[2] != nil,
+				Source: entries[3] != nil,
+			}
 			continue
 		}
+
 		if headEntry, ok := headTree[path]; ok {
 			if !bytes.Equal(ie.oid, headEntry.OID) || ie.mode != headEntry.Mode {
 				indexModified[path] = true
+			} else if mergeSourceTree != nil {
+				// head entry matches index — check if it was a resolved conflict
+				if mergeSourceEntry, ok := mergeSourceTree[path]; ok {
+					if !bytes.Equal(headEntry.OID, mergeSourceEntry.OID) || headEntry.Mode != mergeSourceEntry.Mode {
+						// merge source differs from head; check index doesn't match merge source either
+						if !bytes.Equal(ie.oid, mergeSourceEntry.OID) || ie.mode != mergeSourceEntry.Mode {
+							resolvedConflicts[path] = mergeSourceEntry
+						}
+					}
+				}
 			}
 		} else {
 			indexAdded[path] = true
@@ -87,12 +135,14 @@ func (repo *Repo) status() (*Status, error) {
 	}
 
 	return &Status{
-		Untracked:       untracked,
-		WorkDirModified: workDirModified,
-		WorkDirDeleted:  workDirDeleted,
-		IndexAdded:      indexAdded,
-		IndexModified:   indexModified,
-		IndexDeleted:    indexDeleted,
+		Untracked:           untracked,
+		WorkDirModified:     workDirModified,
+		WorkDirDeleted:      workDirDeleted,
+		IndexAdded:          indexAdded,
+		IndexModified:       indexModified,
+		IndexDeleted:        indexDeleted,
+		UnresolvedConflicts: unresolvedConflicts,
+		ResolvedConflicts:   resolvedConflicts,
 	}, nil
 }
 

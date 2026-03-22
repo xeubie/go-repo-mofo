@@ -221,6 +221,40 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		for _, path := range sortedKeys(st.IndexDeleted) {
 			fmt.Fprintf(runOpts.Out, "D  %s\n", path)
 		}
+		for _, path := range sortedKeys(st.UnresolvedConflicts) {
+			c := st.UnresolvedConflicts[path]
+			var code string
+			if c.Base {
+				if c.Target {
+					if c.Source {
+						code = "UU" // both modified
+					} else {
+						code = "UD" // deleted by them
+					}
+				} else {
+					if c.Source {
+						code = "DU" // deleted by us
+					} else {
+						code = "??" // invalid
+					}
+				}
+			} else {
+				if c.Target {
+					if c.Source {
+						code = "AA" // both added
+					} else {
+						code = "AU" // added by us
+					}
+				} else {
+					if c.Source {
+						code = "UA" // added by them
+					} else {
+						code = "??" // invalid
+					}
+				}
+			}
+			fmt.Fprintf(runOpts.Out, "%s %s\n", code, path)
+		}
 		return nil
 
 	case commandBranch:
@@ -580,7 +614,7 @@ func detectProtocolVersion() int {
 	return version
 }
 
-func sortedKeys(m map[string]bool) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
