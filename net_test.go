@@ -34,6 +34,7 @@ func runGitOnServer(t *testing.T, server testServer, dir string, args ...string)
 	}
 }
 
+
 // --- HTTP server ---
 
 type httpServer struct {
@@ -254,7 +255,7 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-func initServerRepo(t *testing.T, serverPath string) {
+func initRepo(t *testing.T, serverPath string) {
 	t.Helper()
 	runGit(t, ".", "init", serverPath)
 	runGit(t, serverPath, "config", "user.name", "test")
@@ -447,7 +448,7 @@ func testFetch(t *testing.T, server testServer, tempDir string, extraArgs []stri
 	clientPath := filepath.Join(tempDir, "client")
 
 	// init server repo
-	initServerRepo(t, serverPath)
+	initRepo(t, serverPath)
 
 	// copy Go source files into server dir to make a large repo
 	copyGoFiles(t, ".", serverPath)
@@ -462,7 +463,7 @@ func testFetch(t *testing.T, server testServer, tempDir string, extraArgs []stri
 	commit1 := gitRevParse(t, serverPath, "HEAD")
 
 	// init client repo
-	initServerRepo(t, clientPath)
+	initRepo(t, clientPath)
 
 	// add remote
 	remoteURL := server.remoteURL(serverPath)
@@ -520,14 +521,21 @@ func testPush(t *testing.T, server testServer, tempDir string, extraArgs []strin
 	clientPath := filepath.Join(tempDir, "client")
 
 	// init server repo
-	initServerRepo(t, serverPath)
+	initRepo(t, serverPath)
 	runGit(t, serverPath, "config", "core.bare", "false")
 	runGit(t, serverPath, "config", "receive.denycurrentbranch", "updateinstead")
+	runGit(t, serverPath, "config", "receive.denynonfastforwards", "true")
 	runGit(t, serverPath, "config", "http.receivepack", "true")
 	exportServerRepo(t, serverPath)
 
+	// make a commit on the server so client's push is non-fast-forward
+	writeTestFile(t, serverPath, "server.txt", "server content")
+	runGit(t, serverPath, "add", "server.txt")
+	runGit(t, serverPath, "commit", "-m", "server commit")
+	serverCommitBefore := gitRevParse(t, serverPath, "HEAD")
+
 	// init client repo
-	initServerRepo(t, clientPath)
+	initRepo(t, clientPath)
 
 	// create a file and copy Go source files
 	writeTestFile(t, clientPath, "hello.txt", "hello, world!")
@@ -547,11 +555,30 @@ func testPush(t *testing.T, server testServer, tempDir string, extraArgs []strin
 	runGit(t, clientPath, "remote", "add", "origin", remoteURL)
 	runGit(t, clientPath, "config", "branch.master.remote", "origin")
 
-	// push
-	runGitOnServer(t, server, clientPath, append([]string{"push"}, append(extraArgs, "origin", "master")...)...)
+	// force push should be rejected by server-side denyNonFastForwards
+	{
+		pushArgs := append([]string{"push", "--force"}, append(extraArgs, "origin", "master")...)
+		cmd := exec.Command("git", pushArgs...)
+		cmd.Dir = clientPath
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		if err := cmd.Run(); err == nil {
+			t.Fatal("expected non-fast-forward push to be rejected by server")
+		}
+	}
 
-	// verify push was successful
+	// server HEAD should be unchanged
 	serverHead := gitRevParse(t, serverPath, "HEAD")
+	if serverHead != serverCommitBefore {
+		t.Fatalf("server HEAD changed after rejected push: got %s, want %s", serverHead, serverCommitBefore)
+	}
+
+	// disable denyNonFastForwards, force push should now succeed
+	runGit(t, serverPath, "config", "receive.denynonfastforwards", "false")
+	runGitOnServer(t, server, clientPath, append([]string{"push", "--force"}, append(extraArgs, "origin", "master")...)...)
+
+	// verify force push was successful
+	serverHead = gitRevParse(t, serverPath, "HEAD")
 	if serverHead != commit2 {
 		t.Fatalf("server HEAD = %s, want %s", serverHead, commit2)
 	}
