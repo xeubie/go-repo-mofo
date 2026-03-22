@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"repomofo"
+	repomofo "github.com/xeubie/go-repo-mofo"
 )
 
 func main() {
