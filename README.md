@@ -39,7 +39,7 @@ GoRepoMofo implements Git in Go. See below for the functionality it currently ha
 
 ## Using as a library
 
-All of GoRepoMofo's functionality is exposed through the [Repo](repo.go) struct. See the [repo test](repo_test.go) for an example of using it as a library.
+See the [API docs](https://pkg.go.dev/github.com/xeubie/go-repo-mofo). All of GoRepoMofo's functionality is exposed through the [Repo](https://pkg.go.dev/github.com/xeubie/go-repo-mofo#Repo) struct. See the [repo test](repo_test.go) for examples of how to use it.
 
 ## Running as an executable
 
