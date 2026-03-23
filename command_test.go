@@ -6,81 +6,86 @@ func TestCommand(t *testing.T) {
 	// "add" with no file args shows help
 	{
 		cmdArgs := parseCommandArgs([]string{"add", "--cli"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchHelp {
-			t.Fatalf("expected dispatchHelp, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		if _, ok := d.(dispatchHelp); !ok {
+			t.Fatalf("expected dispatchHelp, got %T", d)
 		}
 	}
 
 	// "add file.txt" is a valid CLI command
 	{
 		cmdArgs := parseCommandArgs([]string{"add", "file.txt"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchCLI {
-			t.Fatalf("expected dispatchCLI, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		cli, ok := d.(dispatchCLI)
+		if !ok {
+			t.Fatalf("expected dispatchCLI, got %T", d)
 		}
-		if dispatch.command.Kind != commandAdd {
-			t.Fatalf("expected commandAdd, got %d", dispatch.command.Kind)
+		if cli.command.Kind != commandAdd {
+			t.Fatalf("expected commandAdd, got %d", cli.command.Kind)
 		}
 	}
 
 	// "commit -m" without a value shows help
 	{
 		cmdArgs := parseCommandArgs([]string{"commit", "-m"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchHelp {
-			t.Fatalf("expected dispatchHelp, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		if _, ok := d.(dispatchHelp); !ok {
+			t.Fatalf("expected dispatchHelp, got %T", d)
 		}
 	}
 
 	// "commit -m 'message'" is a valid CLI command
 	{
 		cmdArgs := parseCommandArgs([]string{"commit", "-m", "let there be light"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchCLI {
-			t.Fatalf("expected dispatchCLI, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		cli, ok := d.(dispatchCLI)
+		if !ok {
+			t.Fatalf("expected dispatchCLI, got %T", d)
 		}
-		if dispatch.command.Commit.Message != "let there be light" {
-			t.Fatalf("message = %q, want %q", dispatch.command.Commit.Message, "let there be light")
+		if cli.command.Commit.Message != "let there be light" {
+			t.Fatalf("message = %q, want %q", cli.command.Commit.Message, "let there be light")
 		}
 	}
 
 	// extra config add args are joined
 	{
 		cmdArgs := parseCommandArgs([]string{"config", "add", "user.name", "radar", "roark"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchCLI {
-			t.Fatalf("expected dispatchCLI, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		cli, ok := d.(dispatchCLI)
+		if !ok {
+			t.Fatalf("expected dispatchCLI, got %T", d)
 		}
-		if dispatch.command.Config.Value != "radar roark" {
-			t.Fatalf("config value = %q, want %q", dispatch.command.Config.Value, "radar roark")
+		if cli.command.Config.Value != "radar roark" {
+			t.Fatalf("config value = %q, want %q", cli.command.Config.Value, "radar roark")
 		}
 	}
 
 	// invalid command
 	{
 		cmdArgs := parseCommandArgs([]string{"stats", "--clii"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchInvalidCommand {
-			t.Fatalf("expected dispatchInvalidCommand, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		inv, ok := d.(dispatchInvalidCommand)
+		if !ok {
+			t.Fatalf("expected dispatchInvalidCommand, got %T", d)
 		}
-		if dispatch.InvalidName != "stats" {
-			t.Fatalf("invalid name = %q, want %q", dispatch.InvalidName, "stats")
+		if inv.InvalidName != "stats" {
+			t.Fatalf("invalid name = %q, want %q", inv.InvalidName, "stats")
 		}
 	}
 
 	// invalid argument
 	{
 		cmdArgs := parseCommandArgs([]string{"status", "--clii"})
-		dispatch := newDispatch(cmdArgs)
-		if dispatch.Kind != dispatchInvalidArgument {
-			t.Fatalf("expected dispatchInvalidArgument, got %d", dispatch.Kind)
+		d := newDispatch(cmdArgs)
+		inv, ok := d.(dispatchInvalidArgument)
+		if !ok {
+			t.Fatalf("expected dispatchInvalidArgument, got %T", d)
 		}
-		if dispatch.InvalidCmd == nil || *dispatch.InvalidCmd != commandStatus {
-			t.Fatal("expected InvalidCmd to be commandStatus")
+		if inv.InvalidCmd != commandStatus {
+			t.Fatalf("expected InvalidCmd to be commandStatus, got %d", inv.InvalidCmd)
 		}
-		if dispatch.InvalidName != "--clii" {
-			t.Fatalf("invalid arg = %q, want %q", dispatch.InvalidName, "--clii")
+		if inv.InvalidName != "--clii" {
+			t.Fatalf("invalid arg = %q, want %q", inv.InvalidName, "--clii")
 		}
 	}
 }

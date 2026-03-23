@@ -689,49 +689,57 @@ func parseCommand(cmdArgs *commandArgs) *command {
 	return nil
 }
 
-type dispatchKind int
-
-const (
-	dispatchInvalidCommand dispatchKind = iota
-	dispatchInvalidArgument
-	dispatchHelp
-	dispatchCLI
-)
-
-type dispatch struct {
-	Kind        dispatchKind
-	InvalidName string
-	InvalidCmd  *commandKind
-	HelpCmd     *commandKind
-	command     *command
+type dispatch interface {
+	dispatch()
 }
 
-func newDispatch(cmdArgs *commandArgs) *dispatch {
+type dispatchInvalidCommand struct {
+	InvalidName string
+}
+
+type dispatchInvalidArgument struct {
+	InvalidName string
+	InvalidCmd  commandKind
+}
+
+type dispatchHelp struct {
+	HelpCmd *commandKind
+}
+
+type dispatchCLI struct {
+	command *command
+}
+
+func (dispatchInvalidCommand) dispatch()  {}
+func (dispatchInvalidArgument) dispatch() {}
+func (dispatchHelp) dispatch()            {}
+func (dispatchCLI) dispatch()             {}
+
+func newDispatch(cmdArgs *commandArgs) dispatch {
 	showHelp := cmdArgs.Contains("--help")
 	cmdArgs.Contains("--cli") // consume it
 
 	if cmdArgs.commandKind != nil {
 		if showHelp {
-			return &dispatch{Kind: dispatchHelp, HelpCmd: cmdArgs.commandKind}
+			return dispatchHelp{HelpCmd: cmdArgs.commandKind}
 		}
 		if cmd := parseCommand(cmdArgs); cmd != nil {
 			// check for unused args
 			for arg := range cmdArgs.UnusedArgs {
-				return &dispatch{
-					Kind:        dispatchInvalidArgument,
-					InvalidCmd:  cmdArgs.commandKind,
+				return dispatchInvalidArgument{
+					InvalidCmd:  *cmdArgs.commandKind,
 					InvalidName: arg,
 				}
 			}
-			return &dispatch{Kind: dispatchCLI, command: cmd}
+			return dispatchCLI{command: cmd}
 		}
-		return &dispatch{Kind: dispatchHelp, HelpCmd: cmdArgs.commandKind}
+		return dispatchHelp{HelpCmd: cmdArgs.commandKind}
 	} else if cmdArgs.CommandName != nil {
-		return &dispatch{Kind: dispatchInvalidCommand, InvalidName: *cmdArgs.CommandName}
+		return dispatchInvalidCommand{InvalidName: *cmdArgs.CommandName}
 	} else if showHelp {
-		return &dispatch{Kind: dispatchHelp}
+		return dispatchHelp{}
 	}
-	return &dispatch{Kind: dispatchHelp}
+	return dispatchHelp{}
 }
 
 func maxCommandNameLen() int {

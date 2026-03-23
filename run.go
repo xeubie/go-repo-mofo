@@ -30,25 +30,25 @@ var (
 
 func Run(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
 	cmdArgs := parseCommandArgs(args)
-	dispatch := newDispatch(cmdArgs)
+	d := newDispatch(cmdArgs)
 
-	switch dispatch.Kind {
+	switch d := d.(type) {
 	case dispatchInvalidCommand:
-		fmt.Fprintf(runOpts.Err, "\"%s\" is not a valid command\n\n", dispatch.InvalidName)
+		fmt.Fprintf(runOpts.Err, "\"%s\" is not a valid command\n\n", d.InvalidName)
 		printHelp(nil, runOpts.Err)
 		return ErrHandled
 
 	case dispatchInvalidArgument:
-		fmt.Fprintf(runOpts.Err, "\"%s\" is not a valid argument\n\n", dispatch.InvalidName)
-		printHelp(dispatch.InvalidCmd, runOpts.Err)
+		fmt.Fprintf(runOpts.Err, "\"%s\" is not a valid argument\n\n", d.InvalidName)
+		printHelp(&d.InvalidCmd, runOpts.Err)
 		return ErrHandled
 
 	case dispatchHelp:
-		printHelp(dispatch.HelpCmd, runOpts.Out)
+		printHelp(d.HelpCmd, runOpts.Out)
 		return nil
 
 	case dispatchCLI:
-		return runCommand(opts, dispatch.command, cwdPath, runOpts)
+		return runCommand(opts, d.command, cwdPath, runOpts)
 	}
 	return nil
 }
