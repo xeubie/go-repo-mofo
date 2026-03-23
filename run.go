@@ -474,6 +474,11 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return err
 		}
+		for path := range data.AutoResolved {
+			if _, ok := data.Changes[path]; ok {
+				fmt.Fprintf(runOpts.Out, "auto-merging %s\n", path)
+			}
+		}
 		switch r := data.Result.(type) {
 		case MergeResultSuccess:
 			// nothing to print
@@ -485,22 +490,33 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 			for path, conflict := range r.Conflicts {
 				if conflict.Renamed != nil {
 					conflictType := "file/directory"
+					dirBranchName := data.SourceName
 					if conflict.Target == nil {
 						conflictType = "directory/file"
+						dirBranchName = data.TargetName
 					}
-					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): there is a directory with name %s. adding %s as %s\n", conflictType, path, path, conflict.Renamed.Path)
-				} else if conflict.Target != nil && conflict.Source != nil {
-					conflictType := "content"
-					if conflict.Base == nil {
-						conflictType = "add/add"
-					}
-					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): merge conflict in %s\n", conflictType, path)
+					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): there is a directory with name %s in %s. adding %s as %s\n", conflictType, path, dirBranchName, path, conflict.Renamed.Path)
 				} else {
-					conflictType := "modify/delete"
-					if conflict.Target == nil {
-						conflictType = "delete/modify"
+					if _, ok := data.Changes[path]; ok {
+						fmt.Fprintf(runOpts.Out, "auto-merging %s\n", path)
 					}
-					fmt.Fprintf(runOpts.Err, "CONFLICT (%s): %s\n", conflictType, path)
+					if conflict.Target != nil && conflict.Source != nil {
+						conflictType := "content"
+						if conflict.Base == nil {
+							conflictType = "add/add"
+						}
+						fmt.Fprintf(runOpts.Err, "CONFLICT (%s): merge conflict in %s\n", conflictType, path)
+					} else {
+						conflictType := "modify/delete"
+						deletedBranchName := data.SourceName
+						modifiedBranchName := data.TargetName
+						if conflict.Target == nil {
+							conflictType = "delete/modify"
+							deletedBranchName = data.TargetName
+							modifiedBranchName = data.SourceName
+						}
+						fmt.Fprintf(runOpts.Err, "CONFLICT (%s): %s deleted in %s and modified in %s\n", conflictType, path, deletedBranchName, modifiedBranchName)
+					}
 				}
 			}
 			return ErrHandled
