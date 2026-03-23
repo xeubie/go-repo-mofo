@@ -20,7 +20,7 @@ func newFileObjectStore(repoPath string, opts RepoOpts) *fileObjectStore {
 	return &fileObjectStore{repoPath: repoPath, opts: opts}
 }
 
-func (s *fileObjectStore) WriteObject(header ObjectHeader, reader io.Reader) ([]byte, error) {
+func (s *fileObjectStore) WriteObject(header ObjectHeader, reader io.Reader) (Hash, error) {
 	headerStr := fmt.Sprintf("%s %d\x00", header.Kind.Name(), header.Size)
 
 	tempFile, err := os.CreateTemp(s.repoPath, "object.temp.*")
@@ -43,12 +43,13 @@ func (s *fileObjectStore) WriteObject(header ObjectHeader, reader io.Reader) ([]
 	}
 
 	oidBytes := hasher.Sum(nil)
+	oid := s.opts.Hash.HashFromBytes(oidBytes)
 	oidHex := hex.EncodeToString(oidBytes)
 
 	objDir := filepath.Join(s.repoPath, "objects", oidHex[:2])
 	objPath := filepath.Join(objDir, oidHex[2:])
 	if _, err := os.Stat(objPath); err == nil {
-		return oidBytes, nil
+		return oid, nil
 	}
 
 	if err := os.MkdirAll(objDir, 0755); err != nil {
@@ -74,10 +75,11 @@ func (s *fileObjectStore) WriteObject(header ObjectHeader, reader io.Reader) ([]
 	}
 
 	lock.Success = true
-	return oidBytes, nil
+	return oid, nil
 }
 
-func (s *fileObjectStore) ReadObject(oidHex string) (ObjectReader, error) {
+func (s *fileObjectStore) ReadObject(oid Hash) (ObjectReader, error) {
+	oidHex := oid.Hex()
 	loose, err := s.openLooseObject(oidHex)
 	if err == nil {
 		return loose, nil
@@ -114,7 +116,7 @@ func (s *fileObjectStore) openLooseObject(oidHex string) (*looseObjectReader, er
 
 // CopyFromPackIterator writes pack objects as loose objects.
 func (s *fileObjectStore) CopyFromPackIterator(iter *PackIterator) error {
-	offsetToOID := make(map[uint64][]byte)
+	offsetToOID := make(map[uint64]Hash)
 
 	for {
 		por, err := iter.Next(s, offsetToOID)
@@ -128,13 +130,13 @@ func (s *fileObjectStore) CopyFromPackIterator(iter *PackIterator) error {
 		startPos := iter.StartPosition()
 		header := por.Header()
 
-		oidBytes, err := s.WriteObject(header, por)
+		oid, err := s.WriteObject(header, por)
 		por.Close()
 		if err != nil {
 			return err
 		}
 
-		offsetToOID[startPos] = oidBytes
+		offsetToOID[startPos] = oid
 	}
 	return nil
 }

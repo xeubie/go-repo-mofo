@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -407,7 +406,7 @@ type PackObjectReader struct {
 	// delta init
 	deltaRefKind   deltaRefKind
 	deltaOfsPos    uint64
-	deltaRefOIDHex string
+	deltaRefOID Hash
 	// delta state (set after initDelta)
 	deltaState *deltaState
 }
@@ -520,19 +519,19 @@ func initPackObjectReaderAtPosition(pr PackReader, position uint64) (*PackObject
 		if _, err := io.ReadFull(pr, oidBuf[:hashByteLen]); err != nil {
 			return nil, err
 		}
-		oidHex := hex.EncodeToString(oidBuf[:hashByteLen])
+		oid := SHA1HashKind.HashFromBytes(oidBuf[:hashByteLen])
 		startPos := pr.LogicalPos()
 		stream, err := newPackObjectStream(pr, startPos)
 		if err != nil {
 			return nil, err
 		}
 		return &PackObjectReader{
-			stream:         stream,
-			relPos:         0,
-			size:           size,
-			mode:           packObjectDelta,
-			deltaRefKind:   deltaRefRef,
-			deltaRefOIDHex: oidHex,
+			stream:       stream,
+			relPos:       0,
+			size:         size,
+			mode:         packObjectDelta,
+			deltaRefKind: deltaRefRef,
+			deltaRefOID:  oid,
 		}, nil
 	}
 
@@ -555,7 +554,7 @@ func (por *PackObjectReader) initDelta(store ObjectStore) error {
 		}
 		baseReader = basePack
 	} else {
-		lr, err := store.ReadObject(por.deltaRefOIDHex)
+		lr, err := store.ReadObject(por.deltaRefOID)
 		if err != nil {
 			return err
 		}
@@ -983,8 +982,8 @@ func (it *PackIterator) StartPosition() uint64 {
 
 // Next returns the next pack object, or nil when done.
 // The caller must call Close() on the returned reader before calling Next again.
-// offsetToOID maps pack file offsets to OID bytes, enabling ofs_delta→ref_delta conversion.
-func (it *PackIterator) Next(store ObjectStore, offsetToOID map[uint64][]byte) (*PackObjectReader, error) {
+// offsetToOID maps pack file offsets to Hash, enabling ofs_delta→ref_delta conversion.
+func (it *PackIterator) Next(store ObjectStore, offsetToOID map[uint64]Hash) (*PackObjectReader, error) {
 	if it.objectIndex >= it.objectCount {
 		return nil, nil
 	}
@@ -1010,7 +1009,7 @@ func (it *PackIterator) Next(store ObjectStore, offsetToOID map[uint64][]byte) (
 			if offsetToOID != nil {
 				if oid, ok := offsetToOID[por.deltaOfsPos]; ok {
 					por.deltaRefKind = deltaRefRef
-					por.deltaRefOIDHex = hex.EncodeToString(oid)
+					por.deltaRefOID = oid
 				}
 			}
 		}

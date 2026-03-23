@@ -195,7 +195,7 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 			case RefValue:
 				fmt.Fprintf(runOpts.Out, "on branch %s\n\n", h.Ref.Name)
 			case OIDValue:
-				fmt.Fprintf(runOpts.Out, "HEAD detached at %s\n\n", h.OID)
+				fmt.Fprintf(runOpts.Out, "HEAD detached at %s\n\n", h.OID.Hex())
 			}
 		}
 
@@ -362,13 +362,13 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		}
 
 		// resolve targets to OIDs
-		var startOIDs []string
+		var startOIDs []Hash
 		for _, target := range cmd.Log.Targets {
 			oid, err := repo.readRefRecur(target)
-			if err != nil || oid == "" {
+			if err != nil || oid == nil {
 				switch v := target.(type) {
 				case OIDValue:
-					fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", v.OID)
+					fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", v.OID.Hex())
 				case RefValue:
 					fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", v.Ref.ToPath())
 				}
@@ -397,7 +397,7 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 				return err
 			}
 
-			fmt.Fprintf(runOpts.Out, "commit %s\n", obj.OID)
+			fmt.Fprintf(runOpts.Out, "commit %s\n", obj.OID.Hex())
 			if obj.Commit.Author != "" {
 				fmt.Fprintf(runOpts.Out, "author: %s\n", obj.Commit.Author)
 			}

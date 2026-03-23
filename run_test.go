@@ -1,7 +1,6 @@
 package repomofo
 
 import (
-	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,7 +17,7 @@ func TestRun(t *testing.T) {
 	}
 
 	opts := RepoOpts{
-		Hash:   SHA1Hash,
+		Hash:   SHA1HashKind,
 		IsTest: true,
 	}
 
@@ -121,13 +120,14 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if headOID == "" {
+		if headOID == nil {
 			t.Fatal("HEAD has no OID after commit")
 		}
 
 		// verify the loose object file exists
-		objDir := filepath.Join(gitDir, "objects", headOID[:2])
-		objPath := filepath.Join(objDir, headOID[2:])
+		headHex := headOID.Hex()
+		objDir := filepath.Join(gitDir, "objects", headHex[:2])
+		objPath := filepath.Join(objDir, headHex[2:])
 		if _, err := os.Stat(objPath); err != nil {
 			t.Fatalf("commit object not found at %s: %v", objPath, err)
 		}
@@ -159,11 +159,11 @@ func TestRun(t *testing.T) {
 			t.Fatalf("open repo failed: %v", err)
 		}
 
-		oidBytes, err := repo.writeBlob(readmeContent)
+		oidHash, err := repo.writeBlob(readmeContent)
 		if err != nil {
 			t.Fatalf("hash blob failed: %v", err)
 		}
-		oidHex := hex.EncodeToString(oidBytes)
+		oidHex := oidHash.Hex()
 
 		// look up README in the committed tree to compare
 		headOID, _ := repo.ReadHeadRecurMaybe()
@@ -180,7 +180,7 @@ func TestRun(t *testing.T) {
 		found := false
 		for _, entry := range treeObj.Tree.Entries {
 			if entry.Name == "README" {
-				entryOID := hex.EncodeToString(entry.OID)
+				entryOID := entry.OID.Hex()
 				if entryOID != oidHex {
 					t.Fatalf("README OID mismatch: tree has %s, hashed %s", entryOID, oidHex)
 				}
@@ -194,7 +194,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// get HEAD contents (commit1)
-	var commit1 string
+	var commit1 Hash
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -204,8 +204,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if commit1 == "" {
-			t.Fatal("commit1 is empty")
+		if commit1 == nil {
+			t.Fatal("commit1 is nil")
 		}
 	}
 
@@ -295,7 +295,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// verify second commit
-	var commit2 string
+	var commit2 Hash
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -306,10 +306,10 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if commit2 == "" {
-			t.Fatal("commit2 is empty")
+		if commit2 == nil {
+			t.Fatal("commit2 is nil")
 		}
-		if commit2 == commit1 {
+		if HashEqual(commit2, commit1) {
 			t.Fatal("commit2 should differ from commit1")
 		}
 
@@ -322,8 +322,8 @@ func TestRun(t *testing.T) {
 		if obj.Commit.Message != "second commit" {
 			t.Fatalf("commit2 message = %q, want %q", obj.Commit.Message, "second commit")
 		}
-		if len(obj.Commit.ParentOIDs) != 1 || obj.Commit.ParentOIDs[0] != commit1 {
-			t.Fatalf("commit2 parent = %v, want [%s]", obj.Commit.ParentOIDs, commit1)
+		if len(obj.Commit.ParentOIDs) != 1 || !HashEqual(obj.Commit.ParentOIDs[0], commit1) {
+			t.Fatalf("commit2 parent = %v, want [%s]", obj.Commit.ParentOIDs, commit1.Hex())
 		}
 	}
 
@@ -447,7 +447,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// switch to first commit
-	err = Run(opts, []string{"switch", commit1}, workPath, runOpts)
+	err = Run(opts, []string{"switch", commit1.Hex()}, workPath, runOpts)
 	if err != nil {
 		t.Fatalf("switch to commit1 failed: %v", err)
 	}
@@ -1068,7 +1068,7 @@ func TestRun(t *testing.T) {
 		}
 	}
 	// get HEAD contents (commit3)
-	var commit3 string
+	var commit3 Hash
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -1078,8 +1078,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if commit3 == "" {
-			t.Fatal("commit3 is empty")
+		if commit3 == nil {
+			t.Fatal("commit3 is nil")
 		}
 	}
 
@@ -1106,7 +1106,7 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if headOID != commit3 {
+		if !HashEqual(headOID, commit3) {
 			t.Fatalf("HEAD = %s, want %s", headOID, commit3)
 		}
 
@@ -1114,7 +1114,7 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read stuff ref failed: %v", err)
 		}
-		if stuffOID != commit3 {
+		if !HashEqual(stuffOID, commit3) {
 			t.Fatalf("stuff ref = %s, want %s", stuffOID, commit3)
 		}
 	}
@@ -1209,7 +1209,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// get HEAD contents (commit4_stuff)
-	var commit4Stuff string
+	var commit4Stuff Hash
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -1219,8 +1219,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if commit4Stuff == "" {
-			t.Fatal("commit4Stuff is empty")
+		if commit4Stuff == nil {
+			t.Fatal("commit4Stuff is nil")
 		}
 	}
 
@@ -1314,7 +1314,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// get HEAD contents (commit4)
-	var commit4 string
+	var commit4 Hash
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -1324,8 +1324,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if commit4 == "" {
-			t.Fatal("commit4 is empty")
+		if commit4 == nil {
+			t.Fatal("commit4 is nil")
 		}
 	}
 
@@ -1339,7 +1339,7 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read master ref failed: %v", err)
 		}
-		if masterOID != commit4 {
+		if !HashEqual(masterOID, commit4) {
 			t.Fatalf("master ref = %s, want %s", masterOID, commit4)
 		}
 	}
@@ -1356,7 +1356,7 @@ func TestRun(t *testing.T) {
 		}
 
 		type logEntry struct {
-			oid     string
+			oid     Hash
 			message string
 		}
 		var entries []logEntry
@@ -1381,16 +1381,16 @@ func TestRun(t *testing.T) {
 		if len(entries) != 4 {
 			t.Fatalf("log entry count = %d, want 4", len(entries))
 		}
-		if entries[0].oid != commit4 || entries[0].message != "fourth commit" {
+		if !HashEqual(entries[0].oid, commit4) || entries[0].message != "fourth commit" {
 			t.Fatalf("log[0] = {%s, %q}, want {%s, %q}", entries[0].oid, entries[0].message, commit4, "fourth commit")
 		}
-		if entries[1].oid != commit3 || entries[1].message != "third commit" {
+		if !HashEqual(entries[1].oid, commit3) || entries[1].message != "third commit" {
 			t.Fatalf("log[1] = {%s, %q}, want {%s, %q}", entries[1].oid, entries[1].message, commit3, "third commit")
 		}
-		if entries[2].oid != commit2 || entries[2].message != "second commit" {
+		if !HashEqual(entries[2].oid, commit2) || entries[2].message != "second commit" {
 			t.Fatalf("log[2] = {%s, %q}, want {%s, %q}", entries[2].oid, entries[2].message, commit2, "second commit")
 		}
-		if entries[3].oid != commit1 || entries[3].message != "first commit" {
+		if !HashEqual(entries[3].oid, commit1) || entries[3].message != "first commit" {
 			t.Fatalf("log[3] = {%s, %q}, want {%s, %q}", entries[3].oid, entries[3].message, commit1, "first commit")
 		}
 	}
@@ -1405,7 +1405,7 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("commonAncestor failed: %v", err)
 		}
-		if ancestor != commit3 {
+		if !HashEqual(ancestor, commit3) {
 			t.Fatalf("expected ancestor %s, got %s", commit3, ancestor)
 		}
 	}
@@ -1455,7 +1455,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// get HEAD contents (commit5)
-	var commit5 string
+	var commit5 Hash
 	{
 		repo, err := OpenRepo(workPath, opts)
 		if err != nil {
@@ -1465,8 +1465,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HEAD failed: %v", err)
 		}
-		if commit5 == "" {
-			t.Fatal("commit5 is empty")
+		if commit5 == nil {
+			t.Fatal("commit5 is nil")
 		}
 	}
 	_ = commit5

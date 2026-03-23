@@ -27,7 +27,7 @@ func TestSimple(t *testing.T) {
 		Simple(t, nil)
 	})
 	t.Run("memoryObjectStore", func(t *testing.T) {
-		Simple(t, newMemoryObjectStore(SHA1Hash))
+		Simple(t, newMemoryObjectStore(SHA1HashKind))
 	})
 }
 
@@ -37,7 +37,7 @@ func Simple(t *testing.T, store ObjectStore) {
 	workPath := filepath.Join(tempDir, "repo")
 
 	opts := RepoOpts{
-		Hash:   SHA1Hash,
+		Hash:   SHA1HashKind,
 		IsTest: true,
 		Store:  store,
 	}
@@ -88,9 +88,9 @@ func Simple(t *testing.T, store ObjectStore) {
 	// assert that all commits have been found in the log
 	{
 		oidSet := map[string]bool{
-			commitA: true,
-			commitB: true,
-			commitC: true,
+			commitA.Hex(): true,
+			commitB.Hex(): true,
+			commitC.Hex(): true,
 		}
 
 		iter, err := repo.Log(nil)
@@ -105,7 +105,7 @@ func Simple(t *testing.T, store ObjectStore) {
 			if rawObj == nil {
 				break
 			}
-			delete(oidSet, rawObj.OID)
+			delete(oidSet, rawObj.OID.Hex())
 			rawObj.Close()
 		}
 		if len(oidSet) != 0 {
@@ -211,7 +211,7 @@ func TestMerge(t *testing.T) {
 	tempDir := t.TempDir()
 	workPath := filepath.Join(tempDir, "repo")
 
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	_, err := InitRepo(workPath, opts)
 	if err != nil {
@@ -388,7 +388,7 @@ func TestMergeSideBranch(t *testing.T) {
 	tempDir := t.TempDir()
 	workPath := filepath.Join(tempDir, "repo")
 
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	_, err := InitRepo(workPath, opts)
 	if err != nil {
@@ -500,7 +500,7 @@ func initTestRepo(t *testing.T) *Repo {
 	t.Helper()
 	tempDir := t.TempDir()
 	workPath := filepath.Join(tempDir, "repo")
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 	if _, err := InitRepo(workPath, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -1478,9 +1478,9 @@ func TestLog(t *testing.T) {
 	}
 
 	allOIDs := map[string]bool{
-		commitA: true, commitB: true, commitC: true,
-		commitD: true, commitE: true, commitF: true,
-		commitG: true, commitH: true,
+		commitA.Hex(): true, commitB.Hex(): true, commitC.Hex(): true,
+		commitD.Hex(): true, commitE.Hex(): true, commitF.Hex(): true,
+		commitG.Hex(): true, commitH.Hex(): true,
 	}
 
 	// assert that all commits have been found in the log and they aren't repeated
@@ -1497,10 +1497,10 @@ func TestLog(t *testing.T) {
 			if obj == nil {
 				break
 			}
-			if !allOIDs[obj.OID] {
-				t.Fatalf("unexpected or repeated commit %s", obj.OID)
+			if !allOIDs[obj.OID.Hex()] {
+				t.Fatalf("unexpected or repeated commit %s", obj.OID.Hex())
 			}
-			delete(allOIDs, obj.OID)
+			delete(allOIDs, obj.OID.Hex())
 			obj.Close()
 		}
 		if len(allOIDs) != 0 {
@@ -1510,11 +1510,11 @@ func TestLog(t *testing.T) {
 
 	// assert that only some commits have been found in the log
 	someOIDs := map[string]bool{
-		commitC: true, commitD: true, commitE: true,
-		commitF: true, commitG: true,
+		commitC.Hex(): true, commitD.Hex(): true, commitE.Hex(): true,
+		commitF.Hex(): true, commitG.Hex(): true,
 	}
 	{
-		iter, err := repo.Log([]string{commitG})
+		iter, err := repo.Log([]Hash{commitG})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1529,10 +1529,10 @@ func TestLog(t *testing.T) {
 			if obj == nil {
 				break
 			}
-			if !someOIDs[obj.OID] {
-				t.Fatalf("unexpected or repeated commit %s", obj.OID)
+			if !someOIDs[obj.OID.Hex()] {
+				t.Fatalf("unexpected or repeated commit %s", obj.OID.Hex())
 			}
-			delete(someOIDs, obj.OID)
+			delete(someOIDs, obj.OID.Hex())
 			obj.Close()
 		}
 		if len(someOIDs) != 0 {

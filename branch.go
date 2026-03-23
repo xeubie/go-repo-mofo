@@ -42,16 +42,16 @@ func (repo *Repo) addBranch(input AddBranchInput) error {
 	}
 	headsDir := filepath.Join(repo.repoPath, "refs", "heads")
 
-	oidHex, _ := repo.ReadHeadRecurMaybe()
+	oid, _ := repo.ReadHeadRecurMaybe()
 
-	if oidHex != "" {
+	if oid != nil {
 		lock, err := newLockFile(headsDir, input.Name)
 		if err != nil {
 			return err
 		}
 		defer lock.Close()
 
-		if _, err := lock.File.WriteString(oidHex + "\n"); err != nil {
+		if _, err := lock.File.WriteString(oid.Hex() + "\n"); err != nil {
 			return err
 		}
 		lock.Success = true

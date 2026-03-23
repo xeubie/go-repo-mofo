@@ -23,7 +23,7 @@ func TestCreateAndReadPack(t *testing.T) {
 	}
 
 	workPath := filepath.Join(tempDir, "repo")
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	repo, err := InitRepo(workPath, opts)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestCreateAndReadPack(t *testing.T) {
 
 	// read the pack back and find both commits by OID
 	for _, tc := range []struct {
-		oid     string
+		oid     Hash
 		message string
 	}{
 		{commitOID1, "let there be light"},
@@ -136,7 +136,7 @@ func TestCreateAndReadPack(t *testing.T) {
 			computedOID := hashPackObject(opts.Hash, header, por)
 			por.Close()
 
-			if computedOID == tc.oid {
+			if computedOID == tc.oid.Hex() {
 				found = true
 				// verify the commit message by re-reading from the pack
 				pr2, err := NewFilePackReader(packFilePath, opts.bufferSize())
@@ -148,7 +148,7 @@ func TestCreateAndReadPack(t *testing.T) {
 					pr2.Close()
 					t.Fatal(err)
 				}
-				msg := findCommitMessage(t, iter2, repo.store, opts.Hash, tc.oid)
+				msg := findCommitMessage(t, iter2, repo.store, opts.Hash, tc.oid.Hex())
 				pr2.Close()
 				if msg != tc.message {
 					t.Fatalf("expected message %q, got %q", tc.message, msg)
@@ -159,7 +159,7 @@ func TestCreateAndReadPack(t *testing.T) {
 		pr.Close()
 
 		if !found {
-			t.Fatalf("object %s not found in pack", tc.oid)
+			t.Fatalf("object %s not found in pack", tc.oid.Hex())
 		}
 	}
 }
@@ -250,7 +250,7 @@ func TestWritePackFile(t *testing.T) {
 	}
 
 	clientPath := filepath.Join(tempDir, "client")
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	clientRepo, err := InitRepo(clientPath, opts)
 	if err != nil {
@@ -357,7 +357,7 @@ func TestIteratePackFromFile(t *testing.T) {
 	}
 
 	workPath := filepath.Join(tempDir, "repo")
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	repo, err := InitRepo(workPath, opts)
 	if err != nil {
@@ -396,7 +396,7 @@ func TestIteratePackFromStream(t *testing.T) {
 	}
 
 	workPath := filepath.Join(tempDir, "repo")
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	repo, err := InitRepo(workPath, opts)
 	if err != nil {
@@ -437,7 +437,7 @@ func TestReadPackedRefs(t *testing.T) {
 	}
 
 	workPath := filepath.Join(tempDir, "repo")
-	opts := RepoOpts{Hash: SHA1Hash, IsTest: true}
+	opts := RepoOpts{Hash: SHA1HashKind, IsTest: true}
 
 	repo, err := InitRepo(workPath, opts)
 	if err != nil {
@@ -458,15 +458,15 @@ func TestReadPackedRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if oid != "5246e54744f4e1824ca280e6a2630a87959d7cf4" {
-		t.Fatalf("expected 5246e54744f4e1824ca280e6a2630a87959d7cf4, got %s", oid)
+	if oid == nil || oid.Hex() != "5246e54744f4e1824ca280e6a2630a87959d7cf4" {
+		t.Fatalf("expected 5246e54744f4e1824ca280e6a2630a87959d7cf4, got %v", oid)
 	}
 
 	oid2, err := repo.ReadRef(Ref{Kind: RefRemote, RemoteName: "sync", Name: "foo"})
 	if err != nil && err != ErrRefNotFound {
 		t.Fatal(err)
 	}
-	if oid2 != "" {
-		t.Fatalf("expected empty oid for non-existent ref, got %s", oid2)
+	if oid2 != nil {
+		t.Fatalf("expected nil oid for non-existent ref, got %s", oid2.Hex())
 	}
 }

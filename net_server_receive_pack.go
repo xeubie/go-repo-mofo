@@ -18,8 +18,8 @@ type ReceivePackOptions struct {
 type refUpdate struct {
 	errorMessage string
 	skipUpdate   bool
-	oldOID       string
-	newOID       string
+	oldOID       Hash
+	newOID       Hash
 	refName      string
 }
 
@@ -114,9 +114,9 @@ func (rp *receivePack) readConfig(repo *Repo) error {
 	return nil
 }
 
-func (rp *receivePack) advertiseRef(w io.Writer, hashKind HashKind, path string, oid string) error {
+func (rp *receivePack) advertiseRef(w io.Writer, hashKind HashKind, path string, oid Hash) error {
 	if rp.sentCapabilities {
-		line := fmt.Sprintf("%s %s\n", oid, path)
+		line := fmt.Sprintf("%s %s\n", oid.Hex(), path)
 		return writePktLine(w, []byte(line))
 	}
 
@@ -126,7 +126,7 @@ func (rp *receivePack) advertiseRef(w io.Writer, hashKind HashKind, path string,
 	}
 	caps += " object-format=" + hashKind.Name()
 
-	line := fmt.Sprintf("%s %s\x00%s\n", oid, path, caps)
+	line := fmt.Sprintf("%s %s\x00%s\n", oid.Hex(), path, caps)
 	err := writePktLine(w, []byte(line))
 	if err == nil {
 		rp.sentCapabilities = true
@@ -139,7 +139,7 @@ func (rp *receivePack) advertiseRefs(repo *Repo, w io.Writer) error {
 
 	// HEAD
 	headOID, err := repo.ReadHeadRecurMaybe()
-	if err == nil && headOID != "" {
+	if err == nil && headOID != nil {
 		if err := rp.advertiseRef(w, hashKind, "HEAD", headOID); err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func (rp *receivePack) advertiseRefs(repo *Repo, w io.Writer) error {
 			break
 		}
 		oid, err := repo.ReadRef(*ref)
-		if err != nil || oid == "" {
+		if err != nil || oid == nil {
 			continue
 		}
 		if err := rp.advertiseRef(w, hashKind, ref.ToPath(), oid); err != nil {
@@ -185,7 +185,7 @@ func (rp *receivePack) advertiseRefs(repo *Repo, w io.Writer) error {
 			break
 		}
 		oid, err := repo.ReadRef(*ref)
-		if err != nil || oid == "" {
+		if err != nil || oid == nil {
 			continue
 		}
 		if err := rp.advertiseRef(w, hashKind, ref.ToPath(), oid); err != nil {
@@ -195,7 +195,7 @@ func (rp *receivePack) advertiseRefs(repo *Repo, w io.Writer) error {
 
 	// if no refs were advertised, send capabilities line with zero OID
 	if !rp.sentCapabilities {
-		nullOID := strings.Repeat("0", hashKind.HexLen())
+		nullOID := hashKind.NullHash()
 		if err := rp.advertiseRef(w, hashKind, "capabilities^{}", nullOID); err != nil {
 			return err
 		}
@@ -255,11 +255,17 @@ func (rp *receivePack) readRefUpdates(hashKind HashKind, r io.Reader) ([]refUpda
 		if len(lineData) < minLen {
 			return nil, fmt.Errorf("invalid ref update line")
 		}
-		oldOID := string(lineData[:hexLen])
+		oldOID, err := hashKind.HashFromHex(string(lineData[:hexLen]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid old OID in ref update line: %w", err)
+		}
 		if lineData[hexLen] != ' ' {
 			return nil, fmt.Errorf("invalid ref update line")
 		}
-		newOID := string(lineData[hexLen+1 : hexLen+1+hexLen])
+		newOID, err := hashKind.HashFromHex(string(lineData[hexLen+1 : hexLen+1+hexLen]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid new OID in ref update line: %w", err)
+		}
 		if lineData[hexLen+1+hexLen] != ' ' {
 			return nil, fmt.Errorf("invalid ref update line")
 		}
@@ -284,7 +290,7 @@ func (rp *receivePack) executeRefUpdates(w io.Writer, repo *Repo, updates []refU
 		allConnected := func() bool {
 			iter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll})
 			for i := range updates {
-				if !isNullOID(updates[i].newOID) && !updates[i].skipUpdate {
+				if !updates[i].newOID.IsNull() && !updates[i].skipUpdate {
 					iter.Include(updates[i].newOID)
 				}
 			}
@@ -303,7 +309,7 @@ func (rp *receivePack) executeRefUpdates(w io.Writer, repo *Repo, updates []refU
 
 		if !allConnected {
 			for i := range updates {
-				if isNullOID(updates[i].newOID) {
+				if updates[i].newOID.IsNull() {
 					continue
 				}
 				connected := func() bool {
@@ -366,26 +372,26 @@ func (rp *receivePack) executeRefUpdates(w io.Writer, repo *Repo, updates []refU
 
 		updates[i].skipUpdate = true
 
-		if updates[i].oldOID == dst.oldOID && updates[i].newOID == dst.newOID {
+		if HashEqual(updates[i].oldOID, dst.oldOID) && HashEqual(updates[i].newOID, dst.newOID) {
 			continue
 		}
 
 		dst.skipUpdate = true
 
 		abbrev := 7
-		oldAbbrevI := updates[i].oldOID
+		oldAbbrevI := updates[i].oldOID.Hex()
 		if len(oldAbbrevI) > abbrev {
 			oldAbbrevI = oldAbbrevI[:abbrev]
 		}
-		newAbbrevI := updates[i].newOID
+		newAbbrevI := updates[i].newOID.Hex()
 		if len(newAbbrevI) > abbrev {
 			newAbbrevI = newAbbrevI[:abbrev]
 		}
-		oldAbbrevD := dst.oldOID
+		oldAbbrevD := dst.oldOID.Hex()
 		if len(oldAbbrevD) > abbrev {
 			oldAbbrevD = oldAbbrevD[:abbrev]
 		}
-		newAbbrevD := dst.newOID
+		newAbbrevD := dst.newOID.Hex()
 		if len(newAbbrevD) > abbrev {
 			newAbbrevD = newAbbrevD[:abbrev]
 		}
@@ -428,7 +434,7 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 
 	if !strings.HasPrefix(name, "refs/") ||
 		!validateRefName(nameAfterRefs) ||
-		(!isNullOID(update.newOID) && !strings.Contains(nameAfterRefs, "/")) {
+		(!update.newOID.IsNull() && !strings.Contains(nameAfterRefs, "/")) {
 		writeReceiveError(w, fmt.Sprintf("refusing to update funny ref '%s' remotely", name))
 		return "funny refname"
 	}
@@ -452,14 +458,14 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 		}
 	}
 
-	if !isNullOID(update.newOID) {
+	if !update.newOID.IsNull() {
 		_, err := repo.NewObject(update.newOID, false)
 		if err != nil {
 			return "bad pack"
 		}
 	}
 
-	if !isNullOID(update.oldOID) && isNullOID(update.newOID) {
+	if !update.oldOID.IsNull() && update.newOID.IsNull() {
 		if rp.denyDeletes && strings.HasPrefix(name, "refs/heads/") {
 			writeReceiveError(w, fmt.Sprintf("denying ref deletion for %s", name))
 			return "deletion prohibited"
@@ -481,13 +487,13 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 		}
 	}
 
-	if rp.denyNonFastForwards && !isNullOID(update.newOID) &&
-		!isNullOID(update.oldOID) && strings.HasPrefix(name, "refs/heads/") {
+	if rp.denyNonFastForwards && !update.newOID.IsNull() &&
+		!update.oldOID.IsNull() && strings.HasPrefix(name, "refs/heads/") {
 		descendent, err := getDescendent(repo, update.oldOID, update.newOID)
 		if err != nil {
 			return "bad ref"
 		}
-		if descendent != update.newOID {
+		if !HashEqual(descendent, update.newOID) {
 			writeReceiveError(w, fmt.Sprintf("denying non-fast-forward %s (you should pull first)", name))
 			return "non-fast-forward"
 		}
@@ -508,7 +514,7 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 		}
 	}
 
-	if isNullOID(update.newOID) {
+	if update.newOID.IsNull() {
 		if err := repo.removeRef(name); err != nil {
 			return "failed to remove ref"
 		}
@@ -519,15 +525,6 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 	}
 
 	return ""
-}
-
-func isNullOID(oid string) bool {
-	for _, b := range oid {
-		if b != '0' {
-			return false
-		}
-	}
-	return true
 }
 
 func hasFeature(features, name string) bool {
@@ -605,7 +602,7 @@ func (repo *Repo) ReceivePack(r io.Reader, w io.Writer, options ReceivePackOptio
 		// check if this is a delete-only push
 		deleteOnly := true
 		for _, u := range updates {
-			if !isNullOID(u.newOID) {
+			if !u.newOID.IsNull() {
 				deleteOnly = false
 				break
 			}

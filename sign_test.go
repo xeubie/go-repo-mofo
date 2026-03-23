@@ -26,7 +26,7 @@ func TestSignCommitAndTag(t *testing.T) {
 	workPath := tempDir
 
 	// init repo
-	repo, err := InitRepo(workPath, RepoOpts{Hash: SHA1Hash, IsTest: true})
+	repo, err := InitRepo(workPath, RepoOpts{Hash: SHA1HashKind, IsTest: true})
 	if err != nil {
 		t.Fatal(err)
 	}

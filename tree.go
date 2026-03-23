@@ -1,14 +1,12 @@
 package repomofo
 
 import (
-	"bytes"
-	"encoding/hex"
 	"fmt"
 )
 
 // TreeEntry represents an entry in a git tree object.
 type TreeEntry struct {
-	OID  []byte
+	OID  Hash
 	Mode Mode
 }
 
@@ -19,13 +17,13 @@ type TreeChange struct {
 }
 
 // treeDiff computes changes between two commit OIDs.
-// Either oid may be "" to represent an empty tree.
-func (repo *Repo) treeDiff(oldOID, newOID string) (map[string]TreeChange, error) {
+// Either oid may be nil to represent an empty tree.
+func (repo *Repo) treeDiff(oldOID, newOID Hash) (map[string]TreeChange, error) {
 	changes := make(map[string]TreeChange)
 	return repo.treeCompare(oldOID, newOID, "", changes)
 }
 
-func (repo *Repo) treeCompare(oldTreeOID, newTreeOID, prefix string, changes map[string]TreeChange) (map[string]TreeChange, error) {
+func (repo *Repo) treeCompare(oldTreeOID, newTreeOID Hash, prefix string, changes map[string]TreeChange) (map[string]TreeChange, error) {
 	oldEntries, err := repo.loadTree(oldTreeOID)
 	if err != nil {
 		return nil, err
@@ -44,16 +42,15 @@ func (repo *Repo) treeCompare(oldTreeOID, newTreeOID, prefix string, changes map
 		oe := oldEntry
 		if newEntry, ok := newEntries[name]; ok {
 			ne := newEntry
-			if !bytes.Equal(oe.OID, ne.OID) || oe.Mode != ne.Mode {
+			if !HashEqual(oe.OID, ne.OID) || oe.Mode != ne.Mode {
 				oldIsTree := oe.Mode.ObjType() == ModeObjectTypeTree
 				newIsTree := ne.Mode.ObjType() == ModeObjectTypeTree
-				oldSub := ""
+				var oldSub, newSub Hash
 				if oldIsTree {
-					oldSub = hex.EncodeToString(oe.OID)
+					oldSub = oe.OID
 				}
-				newSub := ""
 				if newIsTree {
-					newSub = hex.EncodeToString(ne.OID)
+					newSub = ne.OID
 				}
 				if oldIsTree || newIsTree {
 					if _, err := repo.treeCompare(oldSub, newSub, path, changes); err != nil {
@@ -73,8 +70,7 @@ func (repo *Repo) treeCompare(oldTreeOID, newTreeOID, prefix string, changes map
 			}
 		} else {
 			if oe.Mode.ObjType() == ModeObjectTypeTree {
-				sub := hex.EncodeToString(oe.OID)
-				if _, err := repo.treeCompare(sub, "", path, changes); err != nil {
+				if _, err := repo.treeCompare(oe.OID, nil, path, changes); err != nil {
 					return nil, err
 				}
 			} else {
@@ -94,8 +90,7 @@ func (repo *Repo) treeCompare(oldTreeOID, newTreeOID, prefix string, changes map
 		}
 		ne := newEntry
 		if ne.Mode.ObjType() == ModeObjectTypeTree {
-			sub := hex.EncodeToString(ne.OID)
-			if _, err := repo.treeCompare("", sub, path, changes); err != nil {
+			if _, err := repo.treeCompare(nil, ne.OID, path, changes); err != nil {
 				return nil, err
 			}
 		} else {
@@ -106,9 +101,9 @@ func (repo *Repo) treeCompare(oldTreeOID, newTreeOID, prefix string, changes map
 	return changes, nil
 }
 
-func (repo *Repo) loadTree(oid string) (map[string]TreeEntry, error) {
+func (repo *Repo) loadTree(oid Hash) (map[string]TreeEntry, error) {
 	result := make(map[string]TreeEntry)
-	if oid == "" {
+	if oid == nil {
 		return result, nil
 	}
 	obj, err := repo.NewObject(oid, true)
@@ -120,9 +115,7 @@ func (repo *Repo) loadTree(oid string) (map[string]TreeEntry, error) {
 	case ObjectKindTree:
 		if obj.Tree != nil {
 			for _, e := range obj.Tree.Entries {
-				oidCopy := make([]byte, len(e.OID))
-				copy(oidCopy, e.OID)
-				result[e.Name] = TreeEntry{OID: oidCopy, Mode: e.Mode}
+				result[e.Name] = TreeEntry{OID: e.OID, Mode: e.Mode}
 			}
 		}
 		return result, nil
@@ -139,38 +132,36 @@ func (repo *Repo) loadTree(oid string) (map[string]TreeEntry, error) {
 }
 
 // pathToTreeEntry walks the HEAD tree to find the entry at the given path.
-// Returns hex OID, mode, and error.
-func (repo *Repo) pathToTreeEntry(pathParts []string) (string, Mode, error) {
+func (repo *Repo) pathToTreeEntry(pathParts []string) (Hash, Mode, error) {
 	headOID, err := repo.ReadHeadRecurMaybe()
-	if err != nil || headOID == "" {
-		return "", 0, fmt.Errorf("no HEAD")
+	if err != nil || headOID == nil {
+		return nil, 0, fmt.Errorf("no HEAD")
 	}
 
 	treeOID, err := repo.readCommitTree(headOID)
 	if err != nil {
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	currentTreeOID := treeOID
 	for i, part := range pathParts {
 		obj, err := repo.NewObject(currentTreeOID, true)
 		if err != nil {
-			return "", 0, err
+			return nil, 0, err
 		}
 
 		found := false
 		if obj.Tree != nil {
 			for _, te := range obj.Tree.Entries {
 				if te.Name == part {
-					oid := hex.EncodeToString(te.OID)
 					obj.Close()
 					if i == len(pathParts)-1 {
-						return oid, te.Mode, nil
+						return te.OID, te.Mode, nil
 					}
 					if te.Mode.ObjType() != ModeObjectTypeTree {
-						return "", 0, fmt.Errorf("not a tree: %s", part)
+						return nil, 0, fmt.Errorf("not a tree: %s", part)
 					}
-					currentTreeOID = oid
+					currentTreeOID = te.OID
 					found = true
 					break
 				}
@@ -178,31 +169,27 @@ func (repo *Repo) pathToTreeEntry(pathParts []string) (string, Mode, error) {
 		}
 		if !found {
 			obj.Close()
-			return "", 0, fmt.Errorf("not found: %s", part)
+			return nil, 0, fmt.Errorf("not found: %s", part)
 		}
 	}
-	return "", 0, fmt.Errorf("not found")
+	return nil, 0, fmt.Errorf("not found")
 }
 
 // headTreeEntry returns the OID and mode of a path in the HEAD tree.
 // Returns nil OID if not found.
-func (repo *Repo) headTreeEntry(filePath string) ([]byte, Mode) {
+func (repo *Repo) headTreeEntry(filePath string) (Hash, Mode) {
 	parts := splitPath(filePath)
-	oidHex, mode, err := repo.pathToTreeEntry(parts)
+	oid, mode, err := repo.pathToTreeEntry(parts)
 	if err != nil {
 		return nil, 0
 	}
-	oidBytes, err := hex.DecodeString(oidHex)
-	if err != nil {
-		return nil, 0
-	}
-	return oidBytes, mode
+	return oid, mode
 }
 
 // flattenHeadTree returns a flat map of all file paths in the HEAD tree.
 func (repo *Repo) flattenHeadTree() (map[string]TreeEntry, error) {
 	headOID, err := repo.ReadHeadRecurMaybe()
-	if err != nil || headOID == "" {
+	if err != nil || headOID == nil {
 		return nil, fmt.Errorf("no HEAD")
 	}
 
@@ -218,7 +205,7 @@ func (repo *Repo) flattenHeadTree() (map[string]TreeEntry, error) {
 	return result, nil
 }
 
-func (repo *Repo) flattenTree(treeOID, prefix string, result map[string]TreeEntry) error {
+func (repo *Repo) flattenTree(treeOID Hash, prefix string, result map[string]TreeEntry) error {
 	obj, err := repo.NewObject(treeOID, true)
 	if err != nil {
 		return err
@@ -238,14 +225,11 @@ func (repo *Repo) flattenTree(treeOID, prefix string, result map[string]TreeEntr
 		}
 
 		if e.Mode.ObjType() == ModeObjectTypeTree {
-			childOID := hex.EncodeToString(e.OID)
-			if err := repo.flattenTree(childOID, path, result); err != nil {
+			if err := repo.flattenTree(e.OID, path, result); err != nil {
 				return err
 			}
 		} else {
-			oidCopy := make([]byte, len(e.OID))
-			copy(oidCopy, e.OID)
-			result[path] = TreeEntry{OID: oidCopy, Mode: e.Mode}
+			result[path] = TreeEntry{OID: e.OID, Mode: e.Mode}
 		}
 	}
 	return nil

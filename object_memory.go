@@ -2,7 +2,6 @@ package repomofo
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"sync"
@@ -23,7 +22,7 @@ func newMemoryObjectStore(hash HashKind) *memoryObjectStore {
 	}
 }
 
-func (s *memoryObjectStore) WriteObject(header ObjectHeader, reader io.Reader) ([]byte, error) {
+func (s *memoryObjectStore) WriteObject(header ObjectHeader, reader io.Reader) (Hash, error) {
 	headerStr := fmt.Sprintf("%s %d\x00", header.Kind.Name(), header.Size)
 
 	var buf bytes.Buffer
@@ -36,18 +35,18 @@ func (s *memoryObjectStore) WriteObject(header ObjectHeader, reader io.Reader) (
 	hasher := s.hash.NewHasher()
 	hasher.Write(data)
 	oidBytes := hasher.Sum(nil)
-	oidHex := hex.EncodeToString(oidBytes)
+	oid := s.hash.HashFromBytes(oidBytes)
 
 	s.mu.Lock()
-	s.objects[oidHex] = data
+	s.objects[oid.Hex()] = data
 	s.mu.Unlock()
 
-	return oidBytes, nil
+	return oid, nil
 }
 
-func (s *memoryObjectStore) ReadObject(oidHex string) (ObjectReader, error) {
+func (s *memoryObjectStore) ReadObject(oid Hash) (ObjectReader, error) {
 	s.mu.RLock()
-	data, ok := s.objects[oidHex]
+	data, ok := s.objects[oid.Hex()]
 	s.mu.RUnlock()
 	if !ok {
 		return nil, ErrObjectNotFound

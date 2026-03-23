@@ -120,13 +120,13 @@ type RefValue struct {
 }
 
 type OIDValue struct {
-	OID string
+	OID Hash
 }
 
 func (RefValue) refOrOid() {}
 func (OIDValue) refOrOid() {}
 
-func refOrOidFromDb(content string) RefOrOid {
+func refOrOidFromDb(content string, hashKind HashKind) RefOrOid {
 	if strings.HasPrefix(content, refStartStr) {
 		ref := refFromPath(content[len(refStartStr):], nil)
 		if ref == nil {
@@ -135,7 +135,11 @@ func refOrOidFromDb(content string) RefOrOid {
 		return RefValue{Ref: *ref}
 	}
 	if isHexString(content) && (len(content) == 40 || len(content) == 64) {
-		return OIDValue{OID: content}
+		h, err := hashKind.HashFromHex(content)
+		if err != nil {
+			return nil
+		}
+		return OIDValue{OID: h}
 	}
 	return nil
 }
@@ -242,7 +246,7 @@ func (repo *Repo) readRef(refPath string) (RefOrOid, error) {
 	data, err := os.ReadFile(filePath)
 	if err == nil {
 		content := strings.TrimRight(string(data), "\n\r")
-		result := refOrOidFromDb(content)
+		result := refOrOidFromDb(content, repo.opts.Hash)
 		return result, nil
 	}
 	if !os.IsNotExist(err) {
@@ -261,7 +265,11 @@ func (repo *Repo) readRef(refPath string) (RefOrOid, error) {
 			}
 			parts := strings.SplitN(trimmed, " ", 2)
 			if len(parts) == 2 && isHexString(parts[0]) && parts[1] == refPath {
-				return OIDValue{OID: parts[0]}, nil
+				h, err := repo.opts.Hash.HashFromHex(parts[0])
+				if err != nil {
+					return nil, err
+				}
+				return OIDValue{OID: h}, nil
 			}
 		}
 	} else if !os.IsNotExist(err) {
@@ -271,8 +279,8 @@ func (repo *Repo) readRef(refPath string) (RefOrOid, error) {
 	return nil, ErrRefNotFound
 }
 
-// readRefRecur recursively resolves a RefOrOid to an OID hex string.
-func (repo *Repo) readRefRecur(input RefOrOid) (string, error) {
+// readRefRecur recursively resolves a RefOrOid to a Hash.
+func (repo *Repo) readRefRecur(input RefOrOid) (Hash, error) {
 	switch v := input.(type) {
 	case OIDValue:
 		return v.OID, nil
@@ -281,54 +289,54 @@ func (repo *Repo) readRefRecur(input RefOrOid) (string, error) {
 		result, err := repo.readRef(refPath)
 		if err != nil {
 			if errors.Is(err, ErrRefNotFound) {
-				return "", nil
+				return nil, nil
 			}
-			return "", err
+			return nil, err
 		}
 		if result == nil {
-			return "", nil
+			return nil, nil
 		}
 		return repo.readRefRecur(result)
 	}
-	return "", nil
+	return nil, nil
 }
 
-// Resolves HEAD recursively to an OID hex string, returning "" if unresolvable.
-func (repo *Repo) ReadHeadRecurMaybe() (string, error) {
+// Resolves HEAD recursively to a Hash, returning nil if unresolvable.
+func (repo *Repo) ReadHeadRecurMaybe() (Hash, error) {
 	result, err := repo.readRef("HEAD")
 	if err != nil {
 		if errors.Is(err, ErrRefNotFound) {
-			return "", nil
+			return nil, nil
 		}
-		return "", err
+		return nil, err
 	}
 	if result == nil {
-		return "", nil
+		return nil, nil
 	}
 	return repo.readRefRecur(result)
 }
 
-// Resolves HEAD recursively to an OID hex string, returning an error if unresolvable.
-func (repo *Repo) ReadHeadRecur() (string, error) {
+// Resolves HEAD recursively to a Hash, returning an error if unresolvable.
+func (repo *Repo) ReadHeadRecur() (Hash, error) {
 	oid, err := repo.ReadHeadRecurMaybe()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if oid == "" {
-		return "", errors.New("HEAD has no valid hash")
+	if oid == nil {
+		return nil, errors.New("HEAD has no valid hash")
 	}
 	return oid, nil
 }
 
-// Recursively resolves a ref to its OID hex string.
-func (repo *Repo) ReadRef(ref Ref) (string, error) {
+// Recursively resolves a ref to a Hash.
+func (repo *Repo) ReadRef(ref Ref) (Hash, error) {
 	refPath := ref.ToPath()
 	result, err := repo.readRef(refPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if result == nil {
-		return "", nil
+		return nil, nil
 	}
 	return repo.readRefRecur(result)
 }
@@ -346,7 +354,7 @@ func (repo *Repo) writeRef(refPath string, refOrOid RefOrOid) error {
 	case RefValue:
 		content = refStartStr + v.Ref.ToPath()
 	case OIDValue:
-		content = v.OID
+		content = v.OID.Hex()
 	}
 
 	lock, err := newLockFile(repo.repoPath, refPath)
@@ -363,22 +371,22 @@ func (repo *Repo) writeRef(refPath string, refOrOid RefOrOid) error {
 }
 
 // writeRefRecur recursively follows symbolic refs and writes the OID.
-func (repo *Repo) writeRefRecur(refPath string, oidHex string) error {
+func (repo *Repo) writeRefRecur(refPath string, oid Hash) error {
 	result, err := repo.readRef(refPath)
 	if err != nil {
 		if errors.Is(err, ErrRefNotFound) {
-			return repo.writeRef(refPath, OIDValue{OID: oidHex})
+			return repo.writeRef(refPath, OIDValue{OID: oid})
 		}
 		return err
 	}
 	if result == nil {
-		return repo.writeRef(refPath, OIDValue{OID: oidHex})
+		return repo.writeRef(refPath, OIDValue{OID: oid})
 	}
 	if rv, ok := result.(RefValue); ok {
 		nextRefPath := rv.Ref.ToPath()
-		return repo.writeRefRecur(nextRefPath, oidHex)
+		return repo.writeRefRecur(nextRefPath, oid)
 	}
-	return repo.writeRef(refPath, OIDValue{OID: oidHex})
+	return repo.writeRef(refPath, OIDValue{OID: oid})
 }
 
 // replaceHead writes a ref or OID to HEAD.
@@ -387,8 +395,8 @@ func (repo *Repo) replaceHead(refOrOid RefOrOid) error {
 }
 
 // updateHead writes an OID to HEAD (following symbolic refs).
-func (repo *Repo) updateHead(oidHex string) error {
-	return repo.writeRefRecur("HEAD", oidHex)
+func (repo *Repo) updateHead(oid Hash) error {
+	return repo.writeRefRecur("HEAD", oid)
 }
 
 // refExists checks whether a ref exists.

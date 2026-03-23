@@ -125,8 +125,8 @@ func (up *uploadPackSession) readConfig(repo *Repo) error {
 }
 
 // writeV0Ref writes a ref advertisement line for v0/v1 protocol.
-func (up *uploadPackSession) writeV0Ref(repo *Repo, w io.Writer, ourRefs map[string]bool, refName string, oid string) error {
-	ourRefs[oid] = true
+func (up *uploadPackSession) writeV0Ref(repo *Repo, w io.Writer, ourRefs map[string]bool, refName string, oid Hash) error {
+	ourRefs[oid.Hex()] = true
 
 	if !up.sentCapabilities {
 		caps := "multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not deepen-relative no-progress include-tag multi_ack_detailed"
@@ -147,13 +147,13 @@ func (up *uploadPackSession) writeV0Ref(repo *Repo, w io.Writer, ourRefs map[str
 		}
 		caps += fmt.Sprintf(" object-format=%s agent=git/2.51.2", repo.opts.Hash.Name())
 
-		line := fmt.Sprintf("%s %s\x00%s\n", oid, refName, caps)
+		line := fmt.Sprintf("%s %s\x00%s\n", oid.Hex(), refName, caps)
 		if err := writePktLine(w, []byte(line)); err != nil {
 			return err
 		}
 		up.sentCapabilities = true
 	} else {
-		line := fmt.Sprintf("%s %s\n", oid, refName)
+		line := fmt.Sprintf("%s %s\n", oid.Hex(), refName)
 		if err := writePktLine(w, []byte(line)); err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func (up *uploadPackSession) writeV0Ref(repo *Repo, w io.Writer, ourRefs map[str
 	// peel tags
 	peeledOID, peeled := peelToNonTag(repo, oid)
 	if peeled {
-		line := fmt.Sprintf("%s %s^{}\n", peeledOID, refName)
+		line := fmt.Sprintf("%s %s^{}\n", peeledOID.Hex(), refName)
 		if err := writePktLine(w, []byte(line)); err != nil {
 			return err
 		}
@@ -171,20 +171,20 @@ func (up *uploadPackSession) writeV0Ref(repo *Repo, w io.Writer, ourRefs map[str
 	return nil
 }
 
-func peelToNonTag(repo *Repo, oid string) (string, bool) {
+func peelToNonTag(repo *Repo, oid Hash) (Hash, bool) {
 	orig := oid
 	for i := 0; i < 64; i++ {
 		obj, err := repo.NewObject(oid, true)
 		if err != nil {
-			return oid, oid != orig
+			return oid, !HashEqual(oid, orig)
 		}
 		defer obj.Close()
 		if obj.Kind != ObjectKindTag || obj.Tag == nil {
-			return oid, oid != orig
+			return oid, !HashEqual(oid, orig)
 		}
 		oid = obj.Tag.Target
 	}
-	return oid, oid != orig
+	return oid, !HashEqual(oid, orig)
 }
 
 func (up *uploadPackSession) receiveNeeds(
@@ -193,7 +193,7 @@ func (up *uploadPackSession) receiveNeeds(
 	r io.Reader,
 	shallowOIDs map[string]bool,
 	deepenNot map[string]bool,
-	wantObj *[]string,
+	wantObj *[]Hash,
 ) error {
 	hexLen := repo.opts.Hash.HexLen()
 	wantedOIDs := make(map[string]bool)
@@ -273,13 +273,18 @@ func (up *uploadPackSession) receiveNeeds(
 			up.filterCapRequested = true
 		}
 
-		if !objectExists(repo, oidStr) {
+		oidHash, err := repo.opts.Hash.HashFromHex(oidStr)
+		if err != nil {
+			writePktError(w, up.writerUseSideband, fmt.Sprintf("upload-pack: not our ref %s", oidStr))
+			return fmt.Errorf("client error")
+		}
+		if !objectExists(repo, oidHash) {
 			writePktError(w, up.writerUseSideband, fmt.Sprintf("upload-pack: not our ref %s", oidStr))
 			return fmt.Errorf("client error")
 		}
 		if !wantedOIDs[oidStr] {
 			wantedOIDs[oidStr] = true
-			*wantObj = append(*wantObj, oidStr)
+			*wantObj = append(*wantObj, oidHash)
 		}
 	}
 
@@ -302,7 +307,7 @@ func (up *uploadPackSession) sendShallowList(
 	ourRefs map[string]bool,
 	shallowOIDs map[string]bool,
 	deepenNot map[string]bool,
-	wantObj *[]string,
+	wantObj *[]Hash,
 ) (bool, error) {
 	if up.depth > 0 && up.deepenRevList {
 		return false, fmt.Errorf("conflicting deepen options")
@@ -328,7 +333,7 @@ func (up *uploadPackSession) deepen(
 	ourRefs map[string]bool,
 	depth int,
 	shallowOIDs map[string]bool,
-	wantObj *[]string,
+	wantObj *[]Hash,
 ) error {
 	notShallowOIDs := make(map[string]bool)
 	infiniteDepth := math.MaxInt
@@ -353,12 +358,13 @@ func (up *uploadPackSession) deepen(
 			if obj == nil {
 				break
 			}
+			oidHex := obj.OID.Hex()
 			if depthIter.Depth == depth {
-				if !shallowOIDs[obj.OID] && !notShallowOIDs[obj.OID] {
-					writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", obj.OID))
+				if !shallowOIDs[oidHex] && !notShallowOIDs[oidHex] {
+					writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", oidHex))
 				}
 			} else {
-				notShallowOIDs[obj.OID] = true
+				notShallowOIDs[oidHex] = true
 			}
 			obj.Close()
 		}
@@ -376,12 +382,13 @@ func (up *uploadPackSession) deepen(
 			if obj == nil {
 				break
 			}
+			oidHex := obj.OID.Hex()
 			if depthIter.Depth == maxDepth {
-				if !shallowOIDs[obj.OID] && !notShallowOIDs[obj.OID] {
-					writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", obj.OID))
+				if !shallowOIDs[oidHex] && !notShallowOIDs[oidHex] {
+					writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", oidHex))
 				}
 			} else {
-				notShallowOIDs[obj.OID] = true
+				notShallowOIDs[oidHex] = true
 			}
 			obj.Close()
 		}
@@ -394,14 +401,18 @@ func (up *uploadPackSession) deepenByRevList(
 	w io.Writer, repo *Repo,
 	shallowOIDs map[string]bool,
 	deepenNot map[string]bool,
-	wantObj *[]string,
+	wantObj *[]Hash,
 ) error {
 	objIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit, Full: true})
 
 	// build exclude set from deepen-not refs
 	if len(deepenNot) > 0 {
 		excludeIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit})
-		for oid := range deepenNot {
+		for oidHex := range deepenNot {
+			oid, err := repo.opts.Hash.HashFromHex(oidHex)
+			if err != nil {
+				continue
+			}
 			excludeIter.Include(oid)
 		}
 		for {
@@ -426,8 +437,8 @@ func (up *uploadPackSession) deepenByRevList(
 
 	notShallowOIDs := make(map[string]bool)
 	type parentEntry struct {
-		oid     string
-		parents []string
+		oid     Hash
+		parents []Hash
 	}
 	var reachableCommits []parentEntry
 
@@ -445,11 +456,11 @@ func (up *uploadPackSession) deepenByRevList(
 			continue
 		}
 
-		notShallowOIDs[obj.OID] = true
+		notShallowOIDs[obj.OID.Hex()] = true
 
-		var parents []string
+		var parents []Hash
 		if obj.Commit != nil {
-			parents = append([]string{}, obj.Commit.ParentOIDs...)
+			parents = append([]Hash{}, obj.Commit.ParentOIDs...)
 		}
 		reachableCommits = append(reachableCommits, parentEntry{oid: obj.OID, parents: parents})
 		obj.Close()
@@ -460,10 +471,10 @@ func (up *uploadPackSession) deepenByRevList(
 	}
 
 	// boundary: commits with at least one parent not in notShallowOIDs
-	var boundaryOIDs []string
+	var boundaryOIDs []Hash
 	for _, entry := range reachableCommits {
 		for _, parent := range entry.parents {
-			if !notShallowOIDs[parent] {
+			if !notShallowOIDs[parent.Hex()] {
 				boundaryOIDs = append(boundaryOIDs, entry.oid)
 				break
 			}
@@ -472,9 +483,10 @@ func (up *uploadPackSession) deepenByRevList(
 
 	// send shallow markers
 	for _, oid := range boundaryOIDs {
-		delete(notShallowOIDs, oid)
-		if !shallowOIDs[oid] {
-			writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", oid))
+		oidHex := oid.Hex()
+		delete(notShallowOIDs, oidHex)
+		if !shallowOIDs[oidHex] {
+			writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", oidHex))
 		}
 	}
 
@@ -485,11 +497,15 @@ func (up *uploadPackSession) sendUnshallow(
 	w io.Writer, repo *Repo,
 	shallowOIDs map[string]bool,
 	notShallowOIDs map[string]bool,
-	wantObj *[]string,
+	wantObj *[]Hash,
 ) error {
-	for oid := range shallowOIDs {
-		if notShallowOIDs[oid] {
-			writePktResponse(w, up.writerUseSideband, fmt.Sprintf("unshallow %s\n", oid))
+	for oidHex := range shallowOIDs {
+		if notShallowOIDs[oidHex] {
+			writePktResponse(w, up.writerUseSideband, fmt.Sprintf("unshallow %s\n", oidHex))
+			oid, err := repo.opts.Hash.HashFromHex(oidHex)
+			if err != nil {
+				continue
+			}
 			obj, err := repo.NewObject(oid, true)
 			if err != nil {
 				continue
@@ -507,7 +523,7 @@ func (up *uploadPackSession) sendUnshallow(
 
 func (up *uploadPackSession) getCommonCommits(
 	repo *Repo, w io.Writer, r io.Reader,
-	haveObj *[]string, wantObj *[]string,
+	haveObj *[]Hash, wantObj *[]Hash,
 	firstLine []byte,
 ) error {
 	hexLen := repo.opts.Hash.HexLen()
@@ -564,7 +580,12 @@ func (up *uploadPackSession) getCommonCommits(
 				return fmt.Errorf("protocol error: expected sha1")
 			}
 			haveHex := haveArg[:hexLen]
-			if appendIfExists(repo, haveHex, haveObj) {
+			haveHash, err := repo.opts.Hash.HashFromHex(haveHex)
+			if err != nil {
+				gotOther = true
+				continue
+			}
+			if appendIfExists(repo, haveHash, haveObj) {
 				gotCommon = true
 				lastHex = haveHex
 				if up.multiAck == multiAckDetailed {
@@ -704,8 +725,8 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 	ourRefs := make(map[string]bool)
 	shallowOIDs := make(map[string]bool)
 	deepenNot := make(map[string]bool)
-	var wantObj []string
-	var haveObj []string
+	var wantObj []Hash
+	var haveObj []Hash
 
 	if err := up.readConfig(repo); err != nil {
 		return err
@@ -728,7 +749,7 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 
 		// HEAD
 		headOID, err := repo.ReadHeadRecurMaybe()
-		if err == nil && headOID != "" {
+		if err == nil && headOID != nil {
 			if err := up.writeV0Ref(repo, w, ourRefs, "HEAD", headOID); err != nil {
 				return err
 			}
@@ -750,7 +771,7 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 				break
 			}
 			oid, err := repo.ReadRef(*ref)
-			if err != nil || oid == "" {
+			if err != nil || oid == nil {
 				continue
 			}
 			if err := up.writeV0Ref(repo, w, ourRefs, ref.ToPath(), oid); err != nil {
@@ -774,7 +795,7 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 				break
 			}
 			oid, err := repo.ReadRef(*ref)
-			if err != nil || oid == "" {
+			if err != nil || oid == nil {
 				continue
 			}
 			if err := up.writeV0Ref(repo, w, ourRefs, ref.ToPath(), oid); err != nil {
@@ -783,7 +804,7 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 		}
 
 		if !up.sentCapabilities {
-			nullOID := strings.Repeat("0", repo.opts.Hash.HexLen())
+			nullOID := repo.opts.Hash.NullHash()
 			if err := up.writeV0Ref(repo, w, ourRefs, "capabilities^{}", nullOID); err != nil {
 				return err
 			}
@@ -795,8 +816,8 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 	} else {
 		// stateless: just mark our refs
 		headOID, err := repo.ReadHeadRecurMaybe()
-		if err == nil && headOID != "" {
-			ourRefs[headOID] = true
+		if err == nil && headOID != nil {
+			ourRefs[headOID.Hex()] = true
 		}
 		collectAllRefs(repo, ourRefs)
 	}
@@ -847,7 +868,7 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 	return nil
 }
 
-func writePack(repo *Repo, w io.Writer, wantObj []string) error {
+func writePack(repo *Repo, w io.Writer, wantObj []Hash) error {
 	objIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll})
 	for _, oid := range wantObj {
 		objIter.Include(oid)
@@ -892,8 +913,8 @@ func collectAllRefs(repo *Repo, refs map[string]bool) {
 			if err != nil || ref == nil {
 				break
 			}
-			if oid, err := repo.ReadRef(*ref); err == nil && oid != "" {
-				refs[oid] = true
+			if oid, err := repo.ReadRef(*ref); err == nil && oid != nil {
+				refs[oid.Hex()] = true
 			}
 		}
 	}
@@ -906,8 +927,8 @@ func collectAllRefs(repo *Repo, refs map[string]bool) {
 			if err != nil || ref == nil {
 				break
 			}
-			if oid, err := repo.ReadRef(*ref); err == nil && oid != "" {
-				refs[oid] = true
+			if oid, err := repo.ReadRef(*ref); err == nil && oid != nil {
+				refs[oid.Hex()] = true
 			}
 		}
 	}
@@ -1167,9 +1188,9 @@ func receiveClientCapability(line string, hashKind HashKind, cfg *v2Config) bool
 		if cap == v2CapObjectFormat && value != "" {
 			switch value {
 			case "sha1":
-				cfg.clientHashAlgo = SHA1Hash
+				cfg.clientHashAlgo = SHA1HashKind
 			case "sha256":
-				cfg.clientHashAlgo = SHA256Hash
+				cfg.clientHashAlgo = SHA256HashKind
 			}
 		}
 		return true
@@ -1237,7 +1258,7 @@ func lsRefs(w io.Writer, repo *Repo, r io.Reader) error {
 			// symref HEAD
 			if refMatch(prefixes, "HEAD") {
 				headOID, _ := repo.readRefRecur(headResult)
-				if headOID != "" {
+				if headOID != nil {
 					if err := sendLsRef(w, hexLen, "HEAD", headOID, shouldPeel, shouldSymrefs, hr.Ref.ToPath(), repo); err != nil {
 						return err
 					}
@@ -1271,7 +1292,7 @@ func lsRefs(w io.Writer, repo *Repo, r io.Reader) error {
 			if !refMatch(prefixes, refPath) {
 				continue
 			}
-			if oid, err := repo.ReadRef(*ref); err == nil && oid != "" {
+			if oid, err := repo.ReadRef(*ref); err == nil && oid != nil {
 				if err := sendLsRef(w, hexLen, refPath, oid, shouldPeel, shouldSymrefs, "", repo); err != nil {
 					return err
 				}
@@ -1293,7 +1314,7 @@ func lsRefs(w io.Writer, repo *Repo, r io.Reader) error {
 			if !refMatch(prefixes, refPath) {
 				continue
 			}
-			if oid, err := repo.ReadRef(*ref); err == nil && oid != "" {
+			if oid, err := repo.ReadRef(*ref); err == nil && oid != nil {
 				if err := sendLsRef(w, hexLen, refPath, oid, shouldPeel, shouldSymrefs, "", repo); err != nil {
 					return err
 				}
@@ -1316,15 +1337,15 @@ func refMatch(prefixes []string, refname string) bool {
 	return false
 }
 
-func sendLsRef(w io.Writer, hexLen int, refname string, oid string, shouldPeel, shouldSymrefs bool, symrefTarget string, repo *Repo) error {
-	line := oid + " " + refname
+func sendLsRef(w io.Writer, hexLen int, refname string, oid Hash, shouldPeel, shouldSymrefs bool, symrefTarget string, repo *Repo) error {
+	line := oid.Hex() + " " + refname
 	if shouldSymrefs && symrefTarget != "" {
 		line += " symref-target:" + symrefTarget
 	}
 	if shouldPeel {
 		peeledOID, peeled := peelToNonTag(repo, oid)
 		if peeled {
-			line += " peeled:" + peeledOID
+			line += " peeled:" + peeledOID.Hex()
 		}
 	}
 	line += "\n"
@@ -1377,7 +1398,14 @@ func objectInfo(w io.Writer, repo *Repo, r io.Reader) error {
 			continue
 		}
 		if wantSize {
-			rdr, err := repo.NewObjectReader(oidStr)
+			oid, err := repo.opts.Hash.HashFromHex(oidStr)
+			if err != nil {
+				if err := writePktLine(w, []byte(fmt.Sprintf("%s ", oidStr))); err != nil {
+					return err
+				}
+				continue
+			}
+			rdr, err := repo.NewObjectReader(oid)
 			if err != nil {
 				if err := writePktLine(w, []byte(fmt.Sprintf("%s ", oidStr))); err != nil {
 					return err
@@ -1405,9 +1433,9 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 	ourRefs := make(map[string]bool)
 	shallowOIDs := make(map[string]bool)
 	deepenNot := make(map[string]bool)
-	wantedRefs := make(map[string]string) // refname -> oid
-	var wantObj []string
-	var haveObj []string
+	wantedRefs := make(map[string]Hash) // refname -> Hash
+	var wantObj []Hash
+	var haveObj []Hash
 
 	up.useSideband = true
 	if err := up.readConfig(repo); err != nil {
@@ -1435,13 +1463,18 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 			if len(wantArg) < hexLen {
 				return fmt.Errorf("protocol error: expected OID")
 			}
-			oid := wantArg[:hexLen]
-			if !objectExists(repo, oid) {
-				writePktError(w, up.writerUseSideband, fmt.Sprintf("upload-pack: not our ref %s", oid))
+			oidStr := wantArg[:hexLen]
+			oid, err := repo.opts.Hash.HashFromHex(oidStr)
+			if err != nil {
+				writePktError(w, up.writerUseSideband, fmt.Sprintf("upload-pack: not our ref %s", oidStr))
 				return fmt.Errorf("client error")
 			}
-			if !wantedOIDs[oid] {
-				wantedOIDs[oid] = true
+			if !objectExists(repo, oid) {
+				writePktError(w, up.writerUseSideband, fmt.Sprintf("upload-pack: not our ref %s", oidStr))
+				return fmt.Errorf("client error")
+			}
+			if !wantedOIDs[oidStr] {
+				wantedOIDs[oidStr] = true
 				wantObj = append(wantObj, oid)
 			}
 			continue
@@ -1454,7 +1487,7 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 				return fmt.Errorf("client error")
 			}
 			oid, err := repo.ReadRef(*ref)
-			if err != nil || oid == "" {
+			if err != nil || oid == nil {
 				writePktError(w, up.writerUseSideband, fmt.Sprintf("unknown ref %s", refName))
 				return fmt.Errorf("client error")
 			}
@@ -1463,8 +1496,9 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 				return fmt.Errorf("client error")
 			}
 			wantedRefs[refName] = oid
-			if !wantedOIDs[oid] {
-				wantedOIDs[oid] = true
+			oidHex := oid.Hex()
+			if !wantedOIDs[oidHex] {
+				wantedOIDs[oidHex] = true
 				wantObj = append(wantObj, oid)
 			}
 			continue
@@ -1474,7 +1508,12 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 			if len(haveArg) < hexLen {
 				return fmt.Errorf("invalid object id")
 			}
-			appendIfExists(repo, haveArg[:hexLen], &haveObj)
+			haveHex := haveArg[:hexLen]
+			haveHash, err := repo.opts.Hash.HashFromHex(haveHex)
+			if err != nil {
+				continue
+			}
+			appendIfExists(repo, haveHash, &haveObj)
 			up.seenHaves = true
 			continue
 		}
@@ -1563,7 +1602,7 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 	if len(wantedRefs) > 0 {
 		writePktResponse(w, up.writerUseSideband, "wanted-refs\n")
 		for refName, oid := range wantedRefs {
-			writePktResponse(w, up.writerUseSideband, fmt.Sprintf("%s %s\n", oid, refName))
+			writePktResponse(w, up.writerUseSideband, fmt.Sprintf("%s %s\n", oid.Hex(), refName))
 		}
 		if err := writePktDelim(w); err != nil {
 			return err
@@ -1584,7 +1623,7 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 	return writePack(repo, w, wantObj)
 }
 
-func sendAcksV2(w io.Writer, up *uploadPackSession, repo *Repo, haveObj *[]string, wantObj *[]string) bool {
+func sendAcksV2(w io.Writer, up *uploadPackSession, repo *Repo, haveObj *[]Hash, wantObj *[]Hash) bool {
 	writePktResponse(w, up.writerUseSideband, "acknowledgments\n")
 
 	if len(*haveObj) == 0 {
@@ -1592,7 +1631,7 @@ func sendAcksV2(w io.Writer, up *uploadPackSession, repo *Repo, haveObj *[]strin
 	}
 
 	for _, ack := range *haveObj {
-		writePktResponse(w, up.writerUseSideband, fmt.Sprintf("ACK %s\n", ack))
+		writePktResponse(w, up.writerUseSideband, fmt.Sprintf("ACK %s\n", ack.Hex()))
 	}
 
 	if !up.waitForDone && allWantsReachable(repo, haveObj, wantObj) {
@@ -1607,8 +1646,8 @@ func sendAcksV2(w io.Writer, up *uploadPackSession, repo *Repo, haveObj *[]strin
 
 // --- helpers ---
 
-func objectExists(repo *Repo, oidHex string) bool {
-	rdr, err := repo.NewObjectReader(oidHex)
+func objectExists(repo *Repo, oid Hash) bool {
+	rdr, err := repo.NewObjectReader(oid)
 	if err != nil {
 		return false
 	}
@@ -1616,11 +1655,11 @@ func objectExists(repo *Repo, oidHex string) bool {
 	return true
 }
 
-func appendIfExists(repo *Repo, oidHex string, list *[]string) bool {
-	if !objectExists(repo, oidHex) {
+func appendIfExists(repo *Repo, oid Hash, list *[]Hash) bool {
+	if !objectExists(repo, oid) {
 		return false
 	}
-	*list = append(*list, oidHex)
+	*list = append(*list, oid)
 	return true
 }
 
@@ -1633,7 +1672,11 @@ func processShallow(repo *Repo, line string) (string, bool) {
 	if len(arg) < hexLen {
 		return "", true
 	}
-	oid := arg[:hexLen]
+	oidStr := arg[:hexLen]
+	oid, err := repo.opts.Hash.HashFromHex(oidStr)
+	if err != nil {
+		return "", true
+	}
 	rdr, err := repo.NewObjectReader(oid)
 	if err != nil {
 		return "", true
@@ -1642,7 +1685,7 @@ func processShallow(repo *Repo, line string) (string, bool) {
 	if rdr.Header().Kind != ObjectKindCommit {
 		return "", true
 	}
-	return oid, true
+	return oidStr, true
 }
 
 func processDeepen(line string) (int, bool) {
@@ -1677,35 +1720,35 @@ func processDeepenNot(repo *Repo, line string) (string, bool) {
 	ref := refFromPath(arg, nil)
 	if ref != nil {
 		oid, err := repo.ReadRef(*ref)
-		if err == nil && oid != "" {
-			return oid, true
+		if err == nil && oid != nil {
+			return oid.Hex(), true
 		}
 	}
 	// try as branch
 	oid, err := repo.ReadRef(Ref{Kind: RefHead, Name: arg})
-	if err == nil && oid != "" {
-		return oid, true
+	if err == nil && oid != nil {
+		return oid.Hex(), true
 	}
 	// try as tag
 	oid, err = repo.ReadRef(Ref{Kind: RefTag, Name: arg})
-	if err == nil && oid != "" {
-		return oid, true
+	if err == nil && oid != nil {
+		return oid.Hex(), true
 	}
 	return "", true
 }
 
-func allWantsReachable(repo *Repo, haveObj *[]string, wantObj *[]string) bool {
+func allWantsReachable(repo *Repo, haveObj *[]Hash, wantObj *[]Hash) bool {
 	if len(*haveObj) == 0 {
 		return false
 	}
 
 	haveSet := make(map[string]bool)
 	for _, oid := range *haveObj {
-		haveSet[oid] = true
+		haveSet[oid.Hex()] = true
 	}
 
 	for _, wantOID := range *wantObj {
-		if haveSet[wantOID] {
+		if haveSet[wantOID.Hex()] {
 			continue
 		}
 		// walk ancestors looking for a have
@@ -1718,7 +1761,7 @@ func allWantsReachable(repo *Repo, haveObj *[]string, wantObj *[]string) bool {
 				break
 			}
 			obj.Close()
-			if haveSet[obj.OID] {
+			if haveSet[obj.OID.Hex()] {
 				found = true
 				break
 			}
@@ -1730,15 +1773,19 @@ func allWantsReachable(repo *Repo, haveObj *[]string, wantObj *[]string) bool {
 	return true
 }
 
-func getReachableShallows(repo *Repo, shallowOIDs map[string]bool, ourRefs map[string]bool) []string {
-	var reachable []string
+func getReachableShallows(repo *Repo, shallowOIDs map[string]bool, ourRefs map[string]bool) []Hash {
+	var reachable []Hash
 	remaining := make(map[string]bool)
 
-	for oid := range shallowOIDs {
-		if ourRefs[oid] {
+	for oidHex := range shallowOIDs {
+		if ourRefs[oidHex] {
+			oid, err := repo.opts.Hash.HashFromHex(oidHex)
+			if err != nil {
+				continue
+			}
 			reachable = append(reachable, oid)
 		} else {
-			remaining[oid] = true
+			remaining[oidHex] = true
 		}
 	}
 
@@ -1747,7 +1794,11 @@ func getReachableShallows(repo *Repo, shallowOIDs map[string]bool, ourRefs map[s
 	}
 
 	iter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit})
-	for oid := range ourRefs {
+	for oidHex := range ourRefs {
+		oid, err := repo.opts.Hash.HashFromHex(oidHex)
+		if err != nil {
+			continue
+		}
 		iter.Include(oid)
 	}
 	for {
@@ -1755,9 +1806,10 @@ func getReachableShallows(repo *Repo, shallowOIDs map[string]bool, ourRefs map[s
 		if err != nil || obj == nil {
 			break
 		}
-		if remaining[obj.OID] {
+		oidHex := obj.OID.Hex()
+		if remaining[oidHex] {
 			reachable = append(reachable, obj.OID)
-			delete(remaining, obj.OID)
+			delete(remaining, oidHex)
 			if len(remaining) == 0 {
 				obj.Close()
 				break

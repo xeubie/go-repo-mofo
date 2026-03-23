@@ -2,7 +2,6 @@ package repomofo
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -85,8 +84,8 @@ func parseObjectHeader(data []byte) (ObjectHeader, int, error) {
 }
 
 // readObjectKind reads an object and returns just its kind.
-func (repo *Repo) readObjectKind(oidHex string) (ObjectKind, error) {
-	rdr, err := repo.store.ReadObject(oidHex)
+func (repo *Repo) readObjectKind(oid Hash) (ObjectKind, error) {
+	rdr, err := repo.store.ReadObject(oid)
 	if err != nil {
 		return 0, err
 	}
@@ -94,27 +93,30 @@ func (repo *Repo) readObjectKind(oidHex string) (ObjectKind, error) {
 	return rdr.Header().Kind, nil
 }
 
-// readCommitTree reads a commit object and returns its tree hash hex string.
-func (repo *Repo) readCommitTree(oidHex string) (string, error) {
-	rdr, err := repo.store.ReadObject(oidHex)
+// readCommitTree reads a commit object and returns its tree hash.
+func (repo *Repo) readCommitTree(oid Hash) (Hash, error) {
+	rdr, err := repo.store.ReadObject(oid)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer rdr.Close()
 
 	data, err := io.ReadAll(rdr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if !bytes.HasPrefix(data, []byte("tree ")) {
-		return "", errors.New("invalid commit: missing tree")
+		return nil, errors.New("invalid commit: missing tree")
 	}
 	hexLen := repo.opts.Hash.HexLen()
 	if len(data) < 5+hexLen {
-		return "", errors.New("invalid commit: tree hash too short")
+		return nil, errors.New("invalid commit: tree hash too short")
 	}
-	treeHash := string(data[5 : 5+hexLen])
+	treeHash, err := repo.opts.Hash.HashFromHex(string(data[5 : 5+hexLen]))
+	if err != nil {
+		return nil, err
+	}
 	return treeHash, nil
 }
 
@@ -132,8 +134,9 @@ func newTreeBuilder() *treeBuilder {
 	return &treeBuilder{}
 }
 
-func (t *treeBuilder) addBlobEntry(mode Mode, name string, oidBytes []byte) {
+func (t *treeBuilder) addBlobEntry(mode Mode, name string, oid Hash) {
 	header := fmt.Sprintf("%s %s\x00", mode.String(), name)
+	oidBytes := oid.Bytes()
 	data := make([]byte, len(header)+len(oidBytes))
 	copy(data, header)
 	copy(data[len(header):], oidBytes)
@@ -143,8 +146,9 @@ func (t *treeBuilder) addBlobEntry(mode Mode, name string, oidBytes []byte) {
 	})
 }
 
-func (t *treeBuilder) addTreeEntry(name string, oidBytes []byte) {
+func (t *treeBuilder) addTreeEntry(name string, oid Hash) {
 	header := fmt.Sprintf("40000 %s\x00", name)
+	oidBytes := oid.Bytes()
 	data := make([]byte, len(header)+len(oidBytes))
 	copy(data, header)
 	copy(data[len(header):], oidBytes)
@@ -193,7 +197,7 @@ func (t *treeBuilder) addIndexEntries(repo *Repo, idx *index, prefix string, chi
 	return nil
 }
 
-func (repo *Repo) writeTree(tree *treeBuilder) ([]byte, error) {
+func (repo *Repo) writeTree(tree *treeBuilder) (Hash, error) {
 	sort.Slice(tree.entries, func(i, j int) bool {
 		return tree.entries[i].sortKey < tree.entries[j].sortKey
 	})
@@ -209,14 +213,14 @@ func (repo *Repo) writeTree(tree *treeBuilder) ([]byte, error) {
 	)
 }
 
-func (repo *Repo) writeBlob(content []byte) ([]byte, error) {
+func (repo *Repo) writeBlob(content []byte) (Hash, error) {
 	return repo.store.WriteObject(
 		ObjectHeader{Kind: ObjectKindBlob, Size: uint64(len(content))},
 		bytes.NewReader(content),
 	)
 }
 
-func (repo *Repo) writeBlobFromReader(reader io.Reader, size uint64) ([]byte, error) {
+func (repo *Repo) writeBlobFromReader(reader io.Reader, size uint64) (Hash, error) {
 	return repo.store.WriteObject(
 		ObjectHeader{Kind: ObjectKindBlob, Size: size},
 		reader,
@@ -228,7 +232,7 @@ type CommitMetadata struct {
 	Author     string
 	Committer  string
 	Message    string
-	ParentOIDs []string // hex strings; nil means "use HEAD"
+	ParentOIDs []Hash // nil means "use HEAD"
 	AllowEmpty bool
 }
 
@@ -267,27 +271,27 @@ func (repo *Repo) signContent(lines []string, signingKey string) ([]string, erro
 }
 
 // writeCommit creates a new commit object and updates HEAD.
-func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
+func (repo *Repo) writeCommit(metadata CommitMetadata) (Hash, error) {
 	parentOIDs := metadata.ParentOIDs
 	if parentOIDs == nil {
 		headOID, err := repo.ReadHeadRecurMaybe()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		if headOID != "" {
-			parentOIDs = []string{headOID}
+		if headOID != nil {
+			parentOIDs = []Hash{headOID}
 		} else {
-			parentOIDs = []string{}
+			parentOIDs = []Hash{}
 		}
 	}
 
 	if err := repo.checkForUnfinishedMerge(); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	idx, err := repo.readIndex()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var rootChildNames []string
@@ -297,39 +301,38 @@ func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 
 	tree := newTreeBuilder()
 	if err := tree.addIndexEntries(repo, idx, "", rootChildNames); err != nil {
-		return "", err
+		return nil, err
 	}
-	treeOIDBytes, err := repo.writeTree(tree)
+	treeOID, err := repo.writeTree(tree)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	treeOIDHex := hex.EncodeToString(treeOIDBytes)
 
 	if !metadata.AllowEmpty {
 		if len(parentOIDs) == 0 {
 			if len(rootChildNames) == 0 {
-				return "", errors.New("empty commit")
+				return nil, errors.New("empty commit")
 			}
 		} else if len(parentOIDs) == 1 {
 			parentTree, err := repo.readCommitTree(parentOIDs[0])
 			if err != nil {
-				return "", err
+				return nil, err
 			}
-			if parentTree == treeOIDHex {
-				return "", errors.New("empty commit")
+			if HashEqual(parentTree, treeOID) {
+				return nil, errors.New("empty commit")
 			}
 		}
 	}
 
 	config, err := repo.loadConfig()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var lines []string
-	lines = append(lines, fmt.Sprintf("tree %s", treeOIDHex))
+	lines = append(lines, fmt.Sprintf("tree %s", treeOID.Hex()))
 	for _, parent := range parentOIDs {
-		lines = append(lines, fmt.Sprintf("parent %s", parent))
+		lines = append(lines, fmt.Sprintf("parent %s", parent.Hex()))
 	}
 
 	var ts uint64
@@ -344,12 +347,12 @@ func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 		} else {
 			userSection := config.GetSection("user")
 			if userSection == nil {
-				return "", errors.New("user config not found")
+				return nil, errors.New("user config not found")
 			}
 			name, ok1 := userSection["name"]
 			email, ok2 := userSection["email"]
 			if !ok1 || !ok2 {
-				return "", errors.New("user config not found")
+				return nil, errors.New("user config not found")
 			}
 			author = fmt.Sprintf("%s <%s>", name, email)
 		}
@@ -369,7 +372,7 @@ func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 		if signingKey, ok := userSection["signingkey"]; ok {
 			sigLines, err := repo.signContent(lines, signingKey)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 
 			var headerLines []string
@@ -390,36 +393,35 @@ func (repo *Repo) writeCommit(metadata CommitMetadata) (string, error) {
 
 	commitContent := strings.Join(lines, "\n")
 
-	oidBytes, err := repo.store.WriteObject(
+	oid, err := repo.store.WriteObject(
 		ObjectHeader{Kind: ObjectKindCommit, Size: uint64(len(commitContent))},
 		strings.NewReader(commitContent),
 	)
 	if err != nil {
-		return "", err
-	}
-	oidHex := hex.EncodeToString(oidBytes)
-
-	if err := repo.writeRefRecur("HEAD", oidHex); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return oidHex, nil
+	if err := repo.writeRefRecur("HEAD", oid); err != nil {
+		return nil, err
+	}
+
+	return oid, nil
 }
 
-// writeTag creates a new tag object. Returns the hex OID.
-func (repo *Repo) writeTag(input AddTagInput, targetOID string) (string, error) {
+// writeTag creates a new tag object. Returns the tag Hash.
+func (repo *Repo) writeTag(input AddTagInput, targetOID Hash) (Hash, error) {
 	targetKind, err := repo.readObjectKind(targetOID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	config, err := repo.loadConfig()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var lines []string
-	lines = append(lines, fmt.Sprintf("object %s", targetOID))
+	lines = append(lines, fmt.Sprintf("object %s", targetOID.Hex()))
 	lines = append(lines, fmt.Sprintf("type %s", targetKind.Name()))
 	lines = append(lines, fmt.Sprintf("tag %s", input.Name))
 
@@ -435,12 +437,12 @@ func (repo *Repo) writeTag(input AddTagInput, targetOID string) (string, error) 
 		} else {
 			userSection := config.GetSection("user")
 			if userSection == nil {
-				return "", errors.New("user config not found")
+				return nil, errors.New("user config not found")
 			}
 			name, ok1 := userSection["name"]
 			email, ok2 := userSection["email"]
 			if !ok1 || !ok2 {
-				return "", errors.New("user config not found")
+				return nil, errors.New("user config not found")
 			}
 			tagger = fmt.Sprintf("%s <%s>", name, email)
 		}
@@ -455,7 +457,7 @@ func (repo *Repo) writeTag(input AddTagInput, targetOID string) (string, error) 
 		if signingKey, ok := userSection["signingkey"]; ok {
 			sigLines, err := repo.signContent(lines, signingKey)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			lines = append(lines, sigLines...)
 		}
@@ -463,15 +465,10 @@ func (repo *Repo) writeTag(input AddTagInput, targetOID string) (string, error) 
 
 	tagContent := strings.Join(lines, "\n")
 
-	oidBytes, err := repo.store.WriteObject(
+	return repo.store.WriteObject(
 		ObjectHeader{Kind: ObjectKindTag, Size: uint64(len(tagContent))},
 		strings.NewReader(tagContent),
 	)
-	if err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(oidBytes), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -495,15 +492,15 @@ type ObjectReader interface {
 // ObjectStore is the interface for pluggable object storage backends.
 type ObjectStore interface {
 	// ReadObject returns a streaming reader for the object with the given OID.
-	ReadObject(oidHex string) (ObjectReader, error)
+	ReadObject(oid Hash) (ObjectReader, error)
 
-	// WriteObject writes an object and returns its raw OID hash bytes.
-	WriteObject(header ObjectHeader, reader io.Reader) ([]byte, error)
+	// WriteObject writes an object and returns its Hash.
+	WriteObject(header ObjectHeader, reader io.Reader) (Hash, error)
 }
 
 // Returns a streaming reader for the object with the given OID.
-func (repo *Repo) NewObjectReader(oidHex string) (ObjectReader, error) {
-	return repo.store.ReadObject(oidHex)
+func (repo *Repo) NewObjectReader(oid Hash) (ObjectReader, error) {
+	return repo.store.ReadObject(oid)
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +508,8 @@ func (repo *Repo) NewObjectReader(oidHex string) (ObjectReader, error) {
 // ---------------------------------------------------------------------------
 
 type CommitContent struct {
-	Tree       string   // hex OID of tree
-	ParentOIDs []string // hex OIDs of parents
+	Tree       Hash
+	ParentOIDs []Hash
 	Author     string
 	Committer  string
 	Message    string
@@ -522,7 +519,7 @@ type CommitContent struct {
 type TreeContentEntry struct {
 	Name string
 	Mode Mode
-	OID  []byte // raw bytes
+	OID  Hash
 }
 
 type TreeContent struct {
@@ -530,7 +527,7 @@ type TreeContent struct {
 }
 
 type TagContent struct {
-	Target  string // hex OID
+	Target  Hash
 	Kind    ObjectKind
 	Name    string
 	Tagger  string
@@ -542,7 +539,7 @@ type TagContent struct {
 // ---------------------------------------------------------------------------
 
 type Object struct {
-	OID  string // hex
+	OID  Hash
 	Kind ObjectKind
 	Size uint64
 
@@ -555,15 +552,15 @@ type Object struct {
 }
 
 // Reads an object by OID, optionally parsing its content when full is true.
-func (repo *Repo) NewObject(oidHex string, full bool) (*Object, error) {
-	rdr, err := repo.NewObjectReader(oidHex)
+func (repo *Repo) NewObject(oid Hash, full bool) (*Object, error) {
+	rdr, err := repo.NewObjectReader(oid)
 	if err != nil {
 		return nil, err
 	}
 	header := rdr.Header()
 
 	obj := &Object{
-		OID:    oidHex,
+		OID:    oid,
 		Kind:   header.Kind,
 		Size:   header.Size,
 		reader: rdr,
@@ -592,9 +589,9 @@ func (o *Object) parseContent(hashKind HashKind) error {
 	case ObjectKindTree:
 		return o.parseTree(hashKind)
 	case ObjectKindCommit:
-		return o.parseCommit()
+		return o.parseCommit(hashKind)
 	case ObjectKindTag:
-		return o.parseTag()
+		return o.parseTag(hashKind)
 	}
 	return nil
 }
@@ -625,8 +622,7 @@ func (o *Object) parseTree(hashKind HashKind) error {
 		if pos+byteLen > len(data) {
 			return errors.New("invalid tree entry: truncated OID")
 		}
-		oid := make([]byte, byteLen)
-		copy(oid, data[pos:pos+byteLen])
+		oid := hashKind.HashFromBytes(data[pos : pos+byteLen])
 		pos += byteLen
 
 		modeVal, err := strconv.ParseUint(modeStr, 8, 32)
@@ -644,7 +640,7 @@ func (o *Object) parseTree(hashKind HashKind) error {
 	return nil
 }
 
-func (o *Object) parseCommit() error {
+func (o *Object) parseCommit(hashKind HashKind) error {
 	data, err := io.ReadAll(o.reader)
 	if err != nil {
 		return err
@@ -661,9 +657,15 @@ func (o *Object) parseCommit() error {
 	lines := strings.Split(headerSection, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "tree ") {
-			cc.Tree = line[5:]
+			h, err := hashKind.HashFromHex(line[5:])
+			if err == nil {
+				cc.Tree = h
+			}
 		} else if strings.HasPrefix(line, "parent ") {
-			cc.ParentOIDs = append(cc.ParentOIDs, line[7:])
+			h, err := hashKind.HashFromHex(line[7:])
+			if err == nil {
+				cc.ParentOIDs = append(cc.ParentOIDs, h)
+			}
 		} else if strings.HasPrefix(line, "author ") {
 			cc.Author = line[7:]
 		} else if strings.HasPrefix(line, "committer ") {
@@ -692,7 +694,7 @@ func parseIdentTimestamp(ident string) uint64 {
 	return ts
 }
 
-func (o *Object) parseTag() error {
+func (o *Object) parseTag(hashKind HashKind) error {
 	data, err := io.ReadAll(o.reader)
 	if err != nil {
 		return err
@@ -709,7 +711,10 @@ func (o *Object) parseTag() error {
 	lines := strings.Split(headerSection, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "object ") {
-			tc.Target = line[7:]
+			h, err := hashKind.HashFromHex(line[7:])
+			if err == nil {
+				tc.Target = h
+			}
 		} else if strings.HasPrefix(line, "type ") {
 			k, err := objectKindFromName(line[5:])
 			if err == nil {
@@ -744,7 +749,7 @@ type ObjectIteratorOptions struct {
 }
 
 type oidQueueEntry struct {
-	oid   string
+	oid   Hash
 	depth int
 }
 
@@ -765,23 +770,24 @@ func (repo *Repo) NewObjectIterator(opts ObjectIteratorOptions) *ObjectIterator 
 	}
 }
 
-func (it *ObjectIterator) Include(oidHex string) {
-	it.IncludeAtDepth(oidHex, 0)
+func (it *ObjectIterator) Include(oid Hash) {
+	it.IncludeAtDepth(oid, 0)
 }
 
-func (it *ObjectIterator) IncludeAtDepth(oidHex string, depth int) {
+func (it *ObjectIterator) IncludeAtDepth(oid Hash, depth int) {
 	if it.options.MaxDepth != nil && depth > *it.options.MaxDepth {
 		return
 	}
-	if !it.Excludes[oidHex] {
-		it.queue = append(it.queue, oidQueueEntry{oid: oidHex, depth: depth})
+	hex := oid.Hex()
+	if !it.Excludes[hex] {
+		it.queue = append(it.queue, oidQueueEntry{oid: oid, depth: depth})
 	}
 }
 
-func (it *ObjectIterator) Exclude(oidHex string) error {
-	it.Excludes[oidHex] = true
+func (it *ObjectIterator) Exclude(oid Hash) error {
+	it.Excludes[oid.Hex()] = true
 
-	obj, err := it.repo.NewObject(oidHex, true)
+	obj, err := it.repo.NewObject(oid, true)
 	if err != nil {
 		return err
 	}
@@ -795,7 +801,7 @@ func (it *ObjectIterator) Exclude(oidHex string) error {
 				if entry.Mode.ObjType() == ModeObjectTypeGitlink {
 					continue
 				}
-				if err := it.Exclude(hex.EncodeToString(entry.OID)); err != nil {
+				if err := it.Exclude(entry.OID); err != nil {
 					return err
 				}
 			}
@@ -803,7 +809,7 @@ func (it *ObjectIterator) Exclude(oidHex string) error {
 	case ObjectKindCommit:
 		if obj.Commit != nil {
 			for _, pid := range obj.Commit.ParentOIDs {
-				it.Excludes[pid] = true
+				it.Excludes[pid.Hex()] = true
 			}
 			if it.options.Kind == ObjectIterAll {
 				if err := it.Exclude(obj.Commit.Tree); err != nil {
@@ -821,10 +827,11 @@ func (it *ObjectIterator) Next() (*Object, error) {
 		entry := it.queue[0]
 		it.queue = it.queue[1:]
 
-		if it.Excludes[entry.oid] {
+		hex := entry.oid.Hex()
+		if it.Excludes[hex] {
 			continue
 		}
-		it.Excludes[entry.oid] = true
+		it.Excludes[hex] = true
 
 		fullObj, err := it.repo.NewObject(entry.oid, true)
 		if err != nil {
@@ -863,7 +870,7 @@ func (it *ObjectIterator) includeContentRefs(obj *Object, childDepth int) {
 				if entry.Mode.ObjType() == ModeObjectTypeGitlink {
 					continue
 				}
-				it.IncludeAtDepth(hex.EncodeToString(entry.OID), childDepth)
+				it.IncludeAtDepth(entry.OID, childDepth)
 			}
 		}
 	case ObjectKindCommit:
@@ -888,7 +895,7 @@ func (repo *Repo) CopyFromPackIterator(iter *PackIterator) error {
 		return fs.CopyFromPackIterator(iter)
 	}
 	// Generic fallback: read each object and write through the store.
-	offsetToOID := make(map[uint64][]byte)
+	offsetToOID := make(map[uint64]Hash)
 	for {
 		por, err := iter.Next(repo.store, offsetToOID)
 		if err != nil {
@@ -901,13 +908,13 @@ func (repo *Repo) CopyFromPackIterator(iter *PackIterator) error {
 		startPos := iter.StartPosition()
 		header := por.Header()
 
-		oidBytes, err := repo.store.WriteObject(header, por)
+		oid, err := repo.store.WriteObject(header, por)
 		por.Close()
 		if err != nil {
 			return err
 		}
 
-		offsetToOID[startPos] = oidBytes
+		offsetToOID[startPos] = oid
 	}
 	return nil
 }

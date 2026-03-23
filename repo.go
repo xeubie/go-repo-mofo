@@ -287,8 +287,8 @@ func (r *Repo) Remove(paths []string, opts RemoveOptions) error {
 	return r.removePaths(normalized, opts)
 }
 
-// Creates a new commit from the current index and returns its OID hex string.
-func (r *Repo) Commit(metadata CommitMetadata) (string, error) {
+// Creates a new commit from the current index and returns its OID.
+func (r *Repo) Commit(metadata CommitMetadata) (Hash, error) {
 	return r.writeCommit(metadata)
 }
 
@@ -325,6 +325,7 @@ func (r *Repo) ResetAdd(target RefOrOid) error {
 		return r.replaceHead(v)
 	case OIDValue:
 		return r.updateHead(v.OID)
+	default:
 	}
 	return nil
 }
@@ -335,7 +336,7 @@ func (r *Repo) Switch(input SwitchInput) (*SwitchResult, error) {
 }
 
 // Returns an iterator over commits reachable from the given OIDs, or from HEAD if none are given.
-func (r *Repo) Log(startOIDs []string) (*ObjectIterator, error) {
+func (r *Repo) Log(startOIDs []Hash) (*ObjectIterator, error) {
 	iter := r.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit})
 
 	if len(startOIDs) == 0 {
@@ -343,7 +344,7 @@ func (r *Repo) Log(startOIDs []string) (*ObjectIterator, error) {
 		if err != nil {
 			return nil, err
 		}
-		if headOID != "" {
+		if headOID != nil {
 			iter.Include(headOID)
 		}
 	} else {
@@ -370,8 +371,8 @@ func (r *Repo) ListBranches() (*RefIterator, error) {
 	return r.listBranches()
 }
 
-// Creates an annotated tag object pointing at HEAD and returns its OID hex string.
-func (r *Repo) AddTag(input AddTagInput) (string, error) {
+// Creates an annotated tag object pointing at HEAD and returns its OID.
+func (r *Repo) AddTag(input AddTagInput) (Hash, error) {
 	return r.addTag(input)
 }
 

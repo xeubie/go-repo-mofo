@@ -247,7 +247,11 @@ var errCommitMessageNotFound = fmt.Errorf("commit message not found")
 // refOrOidFromUser parses a user-supplied string as either a hex OID or a branch ref.
 func refOrOidFromUser(s string, hashKind HashKind) RefOrOid {
 	if isHexString(s) && len(s) == hashKind.HexLen() {
-		return OIDValue{OID: s}
+		h, err := hashKind.HashFromHex(s)
+		if err != nil {
+			return nil
+		}
+		return OIDValue{OID: h}
 	}
 	if validateRefName(s) {
 		return RefValue{Ref: Ref{Kind: RefHead, Name: s}}
@@ -517,7 +521,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 		if len(cmdArgs.PositionalArgs) != 1 {
 			return nil
 		}
-		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1HashKind)
 		if target == nil {
 			return nil
 		}
@@ -530,7 +534,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 		if len(cmdArgs.PositionalArgs) != 1 {
 			return nil
 		}
-		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1HashKind)
 		if target == nil {
 			return nil
 		}
@@ -543,7 +547,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 		if len(cmdArgs.PositionalArgs) != 1 {
 			return nil
 		}
-		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1HashKind)
 		if target == nil {
 			return nil
 		}
@@ -556,7 +560,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 		if len(cmdArgs.PositionalArgs) != 1 {
 			return nil
 		}
-		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+		target := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1HashKind)
 		if target == nil {
 			return nil
 		}
@@ -579,7 +583,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 	case commandLog:
 		var targets []RefOrOid
 		for _, arg := range cmdArgs.PositionalArgs {
-			target := refOrOidFromUser(arg, SHA1Hash)
+			target := refOrOidFromUser(arg, SHA1HashKind)
 			if target == nil {
 				return nil
 			}
@@ -611,7 +615,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 			if len(cmdArgs.PositionalArgs) != 1 {
 				return nil
 			}
-			source := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1Hash)
+			source := refOrOidFromUser(cmdArgs.PositionalArgs[0], SHA1HashKind)
 			if source == nil {
 				return nil
 			}

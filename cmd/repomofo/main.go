@@ -22,7 +22,7 @@ func main() {
 	}
 
 	opts := repomofo.RepoOpts{
-		Hash: repomofo.SHA1Hash,
+		Hash: repomofo.SHA1HashKind,
 	}
 
 	if err := repomofo.RunPrint(opts, args, cwdPath, runOpts); err != nil {

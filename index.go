@@ -22,7 +22,7 @@ type indexEntry struct {
 	uid        uint32
 	gid        uint32
 	fileSize   uint32
-	oid        []byte
+	oid        Hash
 	flags      uint16
 	path       string
 }
@@ -98,8 +98,7 @@ func (repo *Repo) readIndex() (*index, error) {
 		}
 		offset += 40
 
-		entry.oid = make([]byte, byteLen)
-		copy(entry.oid, data[offset:offset+byteLen])
+		entry.oid = hashKind.HashFromBytes(data[offset : offset+byteLen])
 		offset += byteLen
 
 		entry.flags = binary.BigEndian.Uint16(data[offset:])
@@ -171,11 +170,11 @@ func (idx *index) AddPath(filePath string, te *TreeEntry) error {
 		var mode Mode
 		modeSet := false
 		if runtime.GOOS == "windows" {
-			if te != nil && bytes.Equal(oid, te.OID) {
+			if te != nil && HashEqual(oid, te.OID) {
 				mode = te.Mode
 				modeSet = true
 			} else if entries, ok := idx.entries[filePath]; ok && entries[0] != nil {
-				if bytes.Equal(oid, entries[0].oid) {
+				if HashEqual(oid, entries[0].oid) {
 					mode = entries[0].mode
 					modeSet = true
 				}
@@ -458,7 +457,7 @@ func (idx *index) Write(f *os.File) error {
 		binary.Write(&buf, binary.BigEndian, se.entry.uid)
 		binary.Write(&buf, binary.BigEndian, se.entry.gid)
 		binary.Write(&buf, binary.BigEndian, se.entry.fileSize)
-		buf.Write(se.entry.oid)
+		buf.Write(se.entry.oid.Bytes())
 		binary.Write(&buf, binary.BigEndian, se.entry.flags)
 		buf.WriteString(se.entry.path)
 		buf.WriteByte(0) // null terminator
@@ -472,8 +471,8 @@ func (idx *index) Write(f *os.File) error {
 	}
 
 	// checksum (always SHA1 for git index)
-	checksum := SHA1Hash.HashBytes(buf.Bytes())
-	buf.Write(checksum)
+	checksum := SHA1HashKind.HashBytes(buf.Bytes())
+	buf.Write(checksum.Bytes())
 
 	// write to file
 	if err := f.Truncate(0); err != nil {

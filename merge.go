@@ -1,9 +1,7 @@
 package repomofo
 
 import (
-	"bytes"
 	"container/heap"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -34,7 +32,7 @@ const (
 )
 
 type commitParent struct {
-	oid       string
+	oid       Hash
 	kind      commitParentKind
 	timestamp uint64
 }
@@ -57,12 +55,12 @@ func (q *commitParentsQueue) Pop() interface{} {
 // getDescendent
 // ---------------------------------------------------------------------------
 
-func getDescendent(repo *Repo, oid1, oid2 string) (string, error) {
-	if oid1 == oid2 {
+func getDescendent(repo *Repo, oid1, oid2 Hash) (Hash, error) {
+	if HashEqual(oid1, oid2) {
 		return oid1, nil
 	}
 
-	pushParents := func(q *commitParentsQueue, oid string, kind commitParentKind) error {
+	pushParents := func(q *commitParentsQueue, oid Hash, kind commitParentKind) error {
 		obj, err := repo.NewObject(oid, true)
 		if err != nil {
 			return err
@@ -90,10 +88,10 @@ func getDescendent(repo *Repo, oid1, oid2 string) (string, error) {
 	heap.Init(q)
 
 	if err := pushParents(q, oid1, commitParentOne); err != nil {
-		return "", err
+		return nil, err
 	}
 	if err := pushParents(q, oid2, commitParentTwo); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	for q.Len() > 0 {
@@ -101,35 +99,35 @@ func getDescendent(repo *Repo, oid1, oid2 string) (string, error) {
 
 		switch node.kind {
 		case commitParentOne:
-			if node.oid == oid2 {
+			if HashEqual(node.oid, oid2) {
 				return oid1, nil
 			}
-			if node.oid == oid1 {
+			if HashEqual(node.oid, oid1) {
 				continue
 			}
 		case commitParentTwo:
-			if node.oid == oid1 {
+			if HashEqual(node.oid, oid1) {
 				return oid2, nil
 			}
-			if node.oid == oid2 {
+			if HashEqual(node.oid, oid2) {
 				continue
 			}
 		}
 
 		if err := pushParents(q, node.oid, node.kind); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 
-	return "", errDescendentNotFound
+	return nil, errDescendentNotFound
 }
 
 // ---------------------------------------------------------------------------
 // commonAncestor
 // ---------------------------------------------------------------------------
 
-func commonAncestor(repo *Repo, oid1, oid2 string) (string, error) {
-	if oid1 == oid2 {
+func commonAncestor(repo *Repo, oid1, oid2 Hash) (Hash, error) {
+	if HashEqual(oid1, oid2) {
 		return oid1, nil
 	}
 
@@ -138,7 +136,7 @@ func commonAncestor(repo *Repo, oid1, oid2 string) (string, error) {
 
 	obj1, err := repo.NewObject(oid1, true)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if obj1.Commit != nil {
 		heap.Push(q, commitParent{oid: oid1, kind: commitParentOne, timestamp: obj1.Commit.Timestamp})
@@ -147,7 +145,7 @@ func commonAncestor(repo *Repo, oid1, oid2 string) (string, error) {
 
 	obj2, err := repo.NewObject(oid2, true)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if obj2.Commit != nil {
 		heap.Push(q, commitParent{oid: oid2, kind: commitParentTwo, timestamp: obj2.Commit.Timestamp})
@@ -156,58 +154,60 @@ func commonAncestor(repo *Repo, oid1, oid2 string) (string, error) {
 
 	parentsOf1 := map[string]bool{}
 	parentsOf2 := map[string]bool{}
-	var parentsOfBoth []string
+	var parentsOfBoth []Hash
 	parentsOfBothSet := map[string]bool{}
 	staleOIDs := map[string]bool{}
 
 	for q.Len() > 0 {
 		node := heap.Pop(q).(commitParent)
+		nodeHex := node.oid.Hex()
 
 		switch node.kind {
 		case commitParentOne:
-			if node.oid == oid2 {
+			if HashEqual(node.oid, oid2) {
 				return oid2, nil
-			} else if parentsOf2[node.oid] {
-				if !parentsOfBothSet[node.oid] {
+			} else if parentsOf2[nodeHex] {
+				if !parentsOfBothSet[nodeHex] {
 					parentsOfBoth = append(parentsOfBoth, node.oid)
-					parentsOfBothSet[node.oid] = true
+					parentsOfBothSet[nodeHex] = true
 				}
-			} else if parentsOf1[node.oid] {
+			} else if parentsOf1[nodeHex] {
 				continue
 			} else {
-				parentsOf1[node.oid] = true
+				parentsOf1[nodeHex] = true
 			}
 		case commitParentTwo:
-			if node.oid == oid1 {
+			if HashEqual(node.oid, oid1) {
 				return oid1, nil
-			} else if parentsOf1[node.oid] {
-				if !parentsOfBothSet[node.oid] {
+			} else if parentsOf1[nodeHex] {
+				if !parentsOfBothSet[nodeHex] {
 					parentsOfBoth = append(parentsOfBoth, node.oid)
-					parentsOfBothSet[node.oid] = true
+					parentsOfBothSet[nodeHex] = true
 				}
-			} else if parentsOf2[node.oid] {
+			} else if parentsOf2[nodeHex] {
 				continue
 			} else {
-				parentsOf2[node.oid] = true
+				parentsOf2[nodeHex] = true
 			}
 		case commitParentStale:
-			staleOIDs[node.oid] = true
+			staleOIDs[nodeHex] = true
 		}
 
-		isBaseAncestor := parentsOfBothSet[node.oid]
+		isBaseAncestor := parentsOfBothSet[nodeHex]
 
 		obj, err := repo.NewObject(node.oid, true)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if obj.Commit != nil {
 			for _, parentOID := range obj.Commit.ParentOIDs {
-				isStale := isBaseAncestor || staleOIDs[parentOID]
+				parentHex := parentOID.Hex()
+				isStale := isBaseAncestor || staleOIDs[parentHex]
 				if isStale {
 					// update any matching node in the queue to stale
 					found := false
 					for i := 0; i < q.Len(); i++ {
-						if (*q)[i].oid == parentOID {
+						if HashEqual((*q)[i].oid, parentOID) {
 							(*q)[i].kind = commitParentStale
 							heap.Fix(q, i)
 							found = true
@@ -221,7 +221,7 @@ func commonAncestor(repo *Repo, oid1, oid2 string) (string, error) {
 				pObj, err := repo.NewObject(parentOID, true)
 				if err != nil {
 					obj.Close()
-					return "", err
+					return nil, err
 				}
 				var ts uint64
 				if pObj.Commit != nil {
@@ -255,14 +255,14 @@ func commonAncestor(repo *Repo, oid1, oid2 string) (string, error) {
 		for _, nextOID := range parentsOfBoth[1:] {
 			result, err = getDescendent(repo, result, nextOID)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 		}
 		return result, nil
 	} else if len(parentsOfBoth) == 1 {
 		return parentsOfBoth[0], nil
 	}
-	return "", errNoCommonAncestor
+	return nil, errNoCommonAncestor
 }
 
 // ---------------------------------------------------------------------------
@@ -287,18 +287,18 @@ type MergeConflict struct {
 
 func writeBlobWithDiff3(
 	repo *Repo,
-	baseFileOID []byte, // nil if no base
-	targetFileOID []byte,
-	sourceFileOID []byte,
-	baseOIDHex string,
+	baseFileOID Hash, // nil if no base
+	targetFileOID Hash,
+	sourceFileOID Hash,
+	baseOID Hash,
 	targetName string,
 	sourceName string,
 	hasConflict *bool,
-) ([]byte, error) {
+) (Hash, error) {
 	// create line iterators from object store
 	var baseIter *lineIterator
 	if baseFileOID != nil {
-		rdr, err := repo.store.ReadObject(hex.EncodeToString(baseFileOID))
+		rdr, err := repo.store.ReadObject(baseFileOID)
 		if err != nil {
 			return nil, err
 		}
@@ -311,7 +311,7 @@ func writeBlobWithDiff3(
 		baseIter = newLineIteratorFromNothing()
 	}
 
-	targetRdr, err := repo.store.ReadObject(hex.EncodeToString(targetFileOID))
+	targetRdr, err := repo.store.ReadObject(targetFileOID)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +321,7 @@ func writeBlobWithDiff3(
 	}
 	defer targetIter.close()
 
-	sourceRdr, err := repo.store.ReadObject(hex.EncodeToString(sourceFileOID))
+	sourceRdr, err := repo.store.ReadObject(sourceFileOID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,9 +334,7 @@ func writeBlobWithDiff3(
 	// if any file is binary, just return the source oid
 	if baseIter.source.isBinary() || targetIter.source.isBinary() || sourceIter.source.isBinary() {
 		*hasConflict = true
-		result := make([]byte, len(sourceFileOID))
-		copy(result, sourceFileOID)
-		return result, nil
+		return sourceFileOID, nil
 	}
 
 	diff3Iter := newDiff3Iterator(baseIter, targetIter, sourceIter)
@@ -347,7 +345,7 @@ func writeBlobWithDiff3(
 		sourceIter:     sourceIter,
 		diff3Iter:      diff3Iter,
 		targetMarker:   fmt.Sprintf("<<<<<<< target (%s)", targetName),
-		baseMarker:     fmt.Sprintf("||||||| base (%s)", baseOIDHex),
+		baseMarker:     fmt.Sprintf("||||||| base (%s)", baseOID.Hex()),
 		separateMarker: "=======",
 		sourceMarker:   fmt.Sprintf(">>>>>>> source (%s)", sourceName),
 	}
@@ -569,7 +567,7 @@ type samePathConflictResult struct {
 
 func samePathConflict(
 	repo *Repo,
-	baseOID, targetOID, sourceOID string,
+	baseOID, targetOID, sourceOID Hash,
 	targetName, sourceName string,
 	targetChangeMaybe *TreeChange,
 	sourceChange TreeChange,
@@ -583,18 +581,18 @@ func samePathConflict(
 			targetEntry := targetChange.New
 			sourceEntry := sourceChange.New
 
-			if bytes.Equal(targetEntry.OID, sourceEntry.OID) && targetEntry.Mode == sourceEntry.Mode {
+			if HashEqual(targetEntry.OID, sourceEntry.OID) && targetEntry.Mode == sourceEntry.Mode {
 				return &samePathConflictResult{}, nil
 			}
 
 			// three-way merge of OIDs
-			var oidMaybe []byte
-			if bytes.Equal(targetEntry.OID, sourceEntry.OID) {
+			var oidMaybe Hash
+			if HashEqual(targetEntry.OID, sourceEntry.OID) {
 				oidMaybe = targetEntry.OID
 			} else if baseEntryMaybe != nil {
-				if bytes.Equal(baseEntryMaybe.OID, targetEntry.OID) {
+				if HashEqual(baseEntryMaybe.OID, targetEntry.OID) {
 					oidMaybe = sourceEntry.OID
-				} else if bytes.Equal(baseEntryMaybe.OID, sourceEntry.OID) {
+				} else if HashEqual(baseEntryMaybe.OID, sourceEntry.OID) {
 					oidMaybe = targetEntry.OID
 				}
 			}
@@ -618,7 +616,7 @@ func samePathConflict(
 
 			oid := oidMaybe
 			if oid == nil {
-				var baseFileOID []byte
+				var baseFileOID Hash
 				if baseEntryMaybe != nil {
 					baseFileOID = baseEntryMaybe.OID
 				}
@@ -762,7 +760,7 @@ func (repo *Repo) checkForUnfinishedMerge() error {
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
 			return err
 		}
-		if oid != "" {
+		if oid != nil {
 			return errors.New("unfinished merge in progress")
 		}
 	}
@@ -778,24 +776,24 @@ func checkForOtherMerge(repo *Repo, mergeHeadName string) error {
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
 			return err
 		}
-		if oid != "" {
+		if oid != nil {
 			return errors.New("other merge in progress")
 		}
 	}
 	return nil
 }
 
-func readAnyMergeHead(repo *Repo) (string, error) {
+func readAnyMergeHead(repo *Repo) (Hash, error) {
 	for _, name := range mergeHeadNames {
 		oid, err := repo.readRefRecur(RefValue{Ref: Ref{Kind: RefNone, Name: name}})
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
-			return "", err
+			return nil, err
 		}
-		if oid != "" {
+		if oid != nil {
 			return oid, nil
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 func removeMergeState(repo *Repo) {
@@ -841,7 +839,7 @@ type MergeResult interface {
 }
 
 type MergeResultSuccess struct {
-	OID string
+	OID Hash
 }
 type MergeResultNothing struct{}
 type MergeResultFastForward struct{}
@@ -870,7 +868,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 	case RefValue:
 		targetName = v.Ref.Name
 	case OIDValue:
-		targetName = v.OID
+		targetName = v.OID.Hex()
 	}
 	targetOIDMaybe, err := repo.readRefRecur(headRef)
 	if err != nil && !errors.Is(err, ErrRefNotFound) {
@@ -897,7 +895,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid merge source: %w", err)
 		}
-		if sourceOID == "" {
+		if sourceOID == nil {
 			return nil, errors.New("invalid merge source")
 		}
 
@@ -906,18 +904,18 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		case RefValue:
 			sourceName = v.Ref.Name
 		case OIDValue:
-			sourceName = v.OID
+			sourceName = v.OID.Hex()
 		}
 
 		targetOID := targetOIDMaybe
-		if targetOID == "" {
+		if targetOID == nil {
 			// the target branch is completely empty, so just set it to the source oid
 			if err := repo.writeRefRecur("HEAD", sourceOID); err != nil {
 				return nil, err
 			}
 
 			// make a TreeDiff that adds all files from source
-			sourceDiff, err := repo.treeDiff("", sourceOID)
+			sourceDiff, err := repo.treeDiff(nil, sourceOID)
 			if err != nil {
 				return nil, err
 			}
@@ -935,7 +933,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		}
 
 		// get the base oid
-		var baseOID string
+		var baseOID Hash
 		switch input.Kind {
 		case MergeKindFull:
 			baseOID, err = commonAncestor(repo, targetOID, sourceOID)
@@ -956,7 +954,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		}
 
 		// if the base ancestor is the source oid, do nothing
-		if sourceOID == baseOID {
+		if HashEqual(sourceOID, baseOID) {
 			return MergeResultNothing{}, nil
 		}
 
@@ -1076,7 +1074,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 			}, nil
 		}
 
-		if targetOID == baseOID {
+		if HashEqual(targetOID, baseOID) {
 			// the base ancestor is the target oid, so just update HEAD
 			if err := repo.writeRefRecur("HEAD", sourceOID); err != nil {
 				return nil, err
@@ -1087,9 +1085,9 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		// commit the change
 		switch input.Kind {
 		case MergeKindFull:
-			metadata.ParentOIDs = []string{targetOID, sourceOID}
+			metadata.ParentOIDs = []Hash{targetOID, sourceOID}
 		case MergeKindPick:
-			metadata.ParentOIDs = []string{targetOID}
+			metadata.ParentOIDs = []Hash{targetOID}
 		}
 		commitOID, err := repo.writeCommit(*metadata)
 		if err != nil {
@@ -1116,12 +1114,12 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		}
 
 		sourceOID, err := repo.readRefRecur(RefValue{Ref: Ref{Kind: RefNone, Name: mergeHeadName}})
-		if err != nil || sourceOID == "" {
+		if err != nil || sourceOID == nil {
 			return nil, errors.New("merge head not found")
 		}
 
 		targetOID := targetOIDMaybe
-		if targetOID == "" {
+		if targetOID == nil {
 			return nil, errors.New("target oid not found")
 		}
 
@@ -1139,10 +1137,10 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 			metadata.Message = string(data)
 		}
 
-		sourceName := sourceOID
+		sourceName := sourceOID.Hex()
 
 		// get the base oid
-		var baseOID string
+		var baseOID Hash
 		switch input.Kind {
 		case MergeKindFull:
 			baseOID, err = commonAncestor(repo, targetOID, sourceOID)
@@ -1169,9 +1167,9 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		// commit the change
 		switch input.Kind {
 		case MergeKindFull:
-			metadata.ParentOIDs = []string{targetOID, sourceOID}
+			metadata.ParentOIDs = []Hash{targetOID, sourceOID}
 		case MergeKindPick:
-			metadata.ParentOIDs = []string{targetOID}
+			metadata.ParentOIDs = []Hash{targetOID}
 		}
 		_ = baseOID
 		commitOID, err := repo.writeCommit(*metadata)
@@ -1183,7 +1181,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 
 	case MergeActionAbort:
 		targetOID := targetOIDMaybe
-		if targetOID == "" {
+		if targetOID == nil {
 			return nil, errors.New("target oid not found")
 		}
 		removeMergeState(repo)
