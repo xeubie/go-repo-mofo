@@ -76,9 +76,8 @@ func InitRepo(workPath string, opts RepoOpts) (*Repo, error) {
 	}
 
 	// set HEAD to point to refs/heads/master
-	if err := repo.replaceHead(RefOrOid{
-		IsRef: true,
-		Ref:   Ref{Kind: RefHead, Name: "master"},
+	if err := repo.replaceHead(RefValue{
+		Ref: Ref{Kind: RefHead, Name: "master"},
 	}); err != nil {
 		return nil, err
 	}
@@ -308,10 +307,13 @@ func (r *Repo) Restore(path string) error {
 
 // Points HEAD at the given ref or OID without modifying the index or working directory.
 func (r *Repo) ResetAdd(target RefOrOid) error {
-	if target.IsRef {
-		return r.replaceHead(target)
+	switch v := target.(type) {
+	case RefValue:
+		return r.replaceHead(v)
+	case OIDValue:
+		return r.updateHead(v.OID)
 	}
-	return r.updateHead(target.OID)
+	return nil
 }
 
 // Switches HEAD, the index, and optionally the working directory to a new target.

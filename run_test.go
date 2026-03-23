@@ -344,7 +344,7 @@ func TestRun(t *testing.T) {
 			}
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
-				Target:        RefOrOid{OID: commit1},
+				Target:        OIDValue{OID: commit1},
 				UpdateWorkDir: true,
 			})
 			if err != nil {
@@ -375,7 +375,7 @@ func TestRun(t *testing.T) {
 			}
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
-				Target:        RefOrOid{OID: commit1},
+				Target:        OIDValue{OID: commit1},
 				UpdateWorkDir: true,
 			})
 			if err != nil {
@@ -398,7 +398,7 @@ func TestRun(t *testing.T) {
 			}
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
-				Target:        RefOrOid{OID: commit1},
+				Target:        OIDValue{OID: commit1},
 				UpdateWorkDir: true,
 			})
 			if err != nil {
@@ -429,7 +429,7 @@ func TestRun(t *testing.T) {
 			}
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
-				Target:        RefOrOid{OID: commit1},
+				Target:        OIDValue{OID: commit1},
 				UpdateWorkDir: true,
 			})
 			if err != nil {

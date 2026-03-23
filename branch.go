@@ -63,8 +63,8 @@ func (repo *Repo) addBranch(input AddBranchInput) error {
 func (repo *Repo) removeBranch(input RemoveBranchInput) error {
 	// don't allow current branch to be deleted
 	currentRef, err := repo.readRef("HEAD")
-	if err == nil && currentRef != nil && currentRef.IsRef {
-		if currentRef.Ref.Kind == RefHead && currentRef.Ref.Name == input.Name {
+	if rv, ok := currentRef.(RefValue); err == nil && ok {
+		if rv.Ref.Kind == RefHead && rv.Ref.Name == input.Name {
 			return ErrCannotDeleteCurrentBranch
 		}
 	}
@@ -108,8 +108,11 @@ func (repo *Repo) Head() (*HeadResult, error) {
 	if result == nil {
 		return nil, errors.New("HEAD not found")
 	}
-	if result.IsRef {
-		return &HeadResult{IsRef: true, Ref: result.Ref}, nil
+	switch v := result.(type) {
+	case RefValue:
+		return &HeadResult{IsRef: true, Ref: v.Ref}, nil
+	case OIDValue:
+		return &HeadResult{OID: v.OID}, nil
 	}
-	return &HeadResult{OID: result.OID}, nil
+	return nil, errors.New("HEAD not found")
 }

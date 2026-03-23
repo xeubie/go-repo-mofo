@@ -117,7 +117,7 @@ func Simple(t *testing.T, store ObjectStore) {
 	{
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
-			Target:        RefOrOid{OID: commitB},
+			Target:        OIDValue{OID: commitB},
 			UpdateWorkDir: true,
 		})
 		if err != nil {
@@ -140,7 +140,7 @@ func Simple(t *testing.T, store ObjectStore) {
 	{
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
-			Target:        RefOrOid{OID: commitA},
+			Target:        OIDValue{OID: commitA},
 			UpdateWorkDir: true,
 		})
 		if err != nil {
@@ -163,7 +163,7 @@ func Simple(t *testing.T, store ObjectStore) {
 	{
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
-			Target:        RefOrOid{OID: commitC},
+			Target:        OIDValue{OID: commitC},
 			UpdateWorkDir: true,
 		})
 		if err != nil {
@@ -189,7 +189,7 @@ func Simple(t *testing.T, store ObjectStore) {
 	{
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
-			Target:        RefOrOid{IsRef: true, Ref: Ref{Kind: RefTag, Name: "1.0.0"}},
+			Target:        RefValue{Ref: Ref{Kind: RefTag, Name: "1.0.0"}},
 			UpdateWorkDir: true,
 		})
 		if err != nil {
@@ -242,7 +242,7 @@ func TestMerge(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -255,7 +255,7 @@ func TestMerge(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "bar"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "bar"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "bar"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -270,7 +270,7 @@ func TestMerge(t *testing.T) {
 	}
 	_ = commitH
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -279,7 +279,7 @@ func TestMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -292,14 +292,14 @@ func TestMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
 	// merge foo into master
 	mergeResult, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestMerge(t *testing.T) {
 	{
 		mergeResult, err := repo.Merge(MergeInput{
 			Kind:   MergeKindFull,
-			Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+			Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -351,12 +351,12 @@ func TestMerge(t *testing.T) {
 
 	// if we try merging master into foo, it fast forwards
 	{
-		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
 			t.Fatal(err)
 		}
 		mergeResult, err := repo.Merge(MergeInput{
 			Kind:   MergeKindFull,
-			Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}},
+			Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -421,7 +421,7 @@ func TestMergeSideBranch(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "side"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "side"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "side"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,7 +435,7 @@ func TestMergeSideBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -452,7 +452,7 @@ func TestMergeSideBranch(t *testing.T) {
 	// commit f (merge side into master)
 	mergeResult, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "side"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "side"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -467,7 +467,7 @@ func TestMergeSideBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "topic"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "topic"}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -513,7 +513,7 @@ func initTestRepo(t *testing.T) *Repo {
 
 func switchBranch(t *testing.T, repo *Repo, name string) {
 	t.Helper()
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: name}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: name}}, UpdateWorkDir: true}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -522,7 +522,7 @@ func mergeFoo(t *testing.T, repo *Repo) MergeResult {
 	t.Helper()
 	result, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -582,7 +582,7 @@ func TestMergeConflictSameFile(t *testing.T) {
 	// can't merge again with an unresolved merge
 	_, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err == nil {
 		t.Fatal("expected error for merge during unresolved conflict")
@@ -651,7 +651,7 @@ func TestMergeConflictSameFileEmptyBase(t *testing.T) {
 	// can't merge again with an unresolved merge
 	_, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err == nil {
 		t.Fatal("expected error for merge during unresolved conflict")
@@ -790,7 +790,7 @@ func TestMergeConflictModifyDelete(t *testing.T) {
 	// can't merge again with an unresolved merge
 	_, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err == nil {
 		t.Fatal("expected error for merge during unresolved conflict")
@@ -854,7 +854,7 @@ func TestMergeConflictDeleteModify(t *testing.T) {
 	// can't merge again with an unresolved merge
 	_, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err == nil {
 		t.Fatal("expected error for merge during unresolved conflict")
@@ -921,7 +921,7 @@ func TestMergeConflictFileDir(t *testing.T) {
 	// can't merge again with an unresolved merge
 	_, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err == nil {
 		t.Fatal("expected error for merge during unresolved conflict")
@@ -982,7 +982,7 @@ func TestMergeConflictDirFile(t *testing.T) {
 	// can't merge again with an unresolved merge
 	_, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err == nil {
 		t.Fatal("expected error for merge during unresolved conflict")
@@ -1295,7 +1295,7 @@ func TestCherryPick(t *testing.T) {
 
 	result, err := repo.Merge(MergeInput{
 		Kind:   MergeKindPick,
-		Action: MergeActionNew{Source: RefOrOid{OID: commitD}},
+		Action: MergeActionNew{Source: OIDValue{OID: commitD}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1312,7 +1312,7 @@ func TestCherryPick(t *testing.T) {
 	// if we try cherry-picking the same commit again, it succeeds again
 	result2, err := repo.Merge(MergeInput{
 		Kind:     MergeKindPick,
-		Action: MergeActionNew{Source: RefOrOid{OID: commitD}},
+		Action: MergeActionNew{Source: OIDValue{OID: commitD}},
 		Metadata: &CommitMetadata{Message: "d", AllowEmpty: true},
 	})
 	if err != nil {
@@ -1360,7 +1360,7 @@ func TestCherryPickConflict(t *testing.T) {
 
 	result, err := repo.Merge(MergeInput{
 		Kind:   MergeKindPick,
-		Action: MergeActionNew{Source: RefOrOid{OID: commitD}},
+		Action: MergeActionNew{Source: OIDValue{OID: commitD}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1381,7 +1381,7 @@ func TestCherryPickConflict(t *testing.T) {
 	// can't cherry-pick again with an unresolved cherry-pick
 	_, err = repo.Merge(MergeInput{
 		Kind:   MergeKindPick,
-		Action: MergeActionNew{Source: RefOrOid{OID: commitD}},
+		Action: MergeActionNew{Source: OIDValue{OID: commitD}},
 	})
 	if err == nil {
 		t.Fatal("expected error for cherry-pick during unresolved conflict")
@@ -1460,7 +1460,7 @@ func TestLog(t *testing.T) {
 
 	mergeResult, err := repo.Merge(MergeInput{
 		Kind:   MergeKindFull,
-		Action: MergeActionNew{Source: RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: "foo"}}},
+		Action: MergeActionNew{Source: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}},
 	})
 	if err != nil {
 		t.Fatal(err)

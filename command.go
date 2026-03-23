@@ -245,12 +245,12 @@ func (ca *commandArgs) Get(arg string) (string, bool) {
 var errCommitMessageNotFound = fmt.Errorf("commit message not found")
 
 // refOrOidFromUser parses a user-supplied string as either a hex OID or a branch ref.
-func refOrOidFromUser(s string, hashKind HashKind) *RefOrOid {
+func refOrOidFromUser(s string, hashKind HashKind) RefOrOid {
 	if isHexString(s) && len(s) == hashKind.HexLen() {
-		return &RefOrOid{OID: s}
+		return OIDValue{OID: s}
 	}
 	if validateRefName(s) {
-		return &RefOrOid{IsRef: true, Ref: Ref{Kind: RefHead, Name: s}}
+		return RefValue{Ref: Ref{Kind: RefHead, Name: s}}
 	}
 	return nil
 }
@@ -522,7 +522,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 			return nil
 		}
 		return &command{Kind: commandSwitchDir, Switch: &switchCommand{
-			Target: *target,
+			Target: target,
 			Force:  cmdArgs.Contains("-f"),
 		}}
 
@@ -535,7 +535,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 			return nil
 		}
 		return &command{Kind: commandReset, Switch: &switchCommand{
-			Target: *target,
+			Target: target,
 			Force:  cmdArgs.Contains("-f"),
 		}}
 
@@ -548,7 +548,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 			return nil
 		}
 		return &command{Kind: commandResetDir, Switch: &switchCommand{
-			Target: *target,
+			Target: target,
 			Force:  cmdArgs.Contains("-f"),
 		}}
 
@@ -561,11 +561,11 @@ func parseCommand(cmdArgs *commandArgs) *command {
 			return nil
 		}
 		// reset-add only accepts OIDs
-		if target.IsRef {
+		if _, ok := target.(RefValue); ok {
 			return nil
 		}
 		return &command{Kind: commandResetAdd, ResetAdd: &resetAddCommand{
-			Target: *target,
+			Target: target,
 		}}
 
 	case commandRestore:
@@ -583,7 +583,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 			if target == nil {
 				return nil
 			}
-			targets = append(targets, *target)
+			targets = append(targets, target)
 		}
 		return &command{Kind: commandLog, Log: &logCommand{Targets: targets}}
 
@@ -616,7 +616,7 @@ func parseCommand(cmdArgs *commandArgs) *command {
 				return nil
 			}
 			return &command{Kind: *cmdArgs.commandKind, Merge: &mergeCommand{
-				Input: MergeInput{Kind: kind, Action: MergeActionNew{Source: *source}},
+				Input: MergeInput{Kind: kind, Action: MergeActionNew{Source: source}},
 			}}
 		}
 

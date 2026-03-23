@@ -294,8 +294,8 @@ func (rp *receivePack) executeRefUpdates(w io.Writer, repo *Repo, updates []refU
 
 	// read HEAD to know current branch
 	headResult, err := repo.readRef("HEAD")
-	if err == nil && headResult != nil && headResult.IsRef {
-		rp.headName = headResult.Ref.ToPath()
+	if rv, ok := headResult.(RefValue); err == nil && ok {
+		rp.headName = rv.Ref.ToPath()
 	}
 
 	for i := range updates {
@@ -391,7 +391,7 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 		}
 		_, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
-			Target:        RefOrOid{OID: update.newOID},
+			Target:        OIDValue{OID: update.newOID},
 			UpdateWorkDir: true,
 			Force:         true,
 		})
@@ -405,7 +405,7 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 			return "failed to remove ref"
 		}
 	} else {
-		if err := repo.writeRef(name, RefOrOid{OID: update.newOID}); err != nil {
+		if err := repo.writeRef(name, OIDValue{OID: update.newOID}); err != nil {
 			return "failed to write ref"
 		}
 	}

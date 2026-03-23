@@ -35,7 +35,7 @@ func (repo *Repo) addTag(input AddTagInput) (string, error) {
 
 	// write the tag ref
 	refPath := "refs/tags/" + input.Name
-	if err := repo.writeRef(refPath, RefOrOid{OID: tagOID}); err != nil {
+	if err := repo.writeRef(refPath, OIDValue{OID: tagOID}); err != nil {
 		return "", err
 	}
 

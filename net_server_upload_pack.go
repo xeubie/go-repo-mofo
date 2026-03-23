@@ -714,10 +714,10 @@ func uploadPack(w io.Writer, repo *Repo, options UploadPackOptions, r io.Reader)
 
 	// read HEAD for symref
 	headResult, err := repo.readRef("HEAD")
-	if err == nil && headResult != nil && headResult.IsRef {
+	if rv, ok := headResult.(RefValue); err == nil && ok {
 		up.symrefs = append(up.symrefs, symref{
 			name:   "HEAD",
-			target: headResult.Ref.ToPath(),
+			target: rv.Ref.ToPath(),
 		})
 	}
 
@@ -1231,24 +1231,25 @@ func lsRefs(w io.Writer, repo *Repo, r io.Reader) error {
 	// HEAD
 	headResult, err := repo.readRef("HEAD")
 	if err == nil && headResult != nil {
-		if headResult.IsRef {
+		switch hr := headResult.(type) {
+		case RefValue:
 			// symref HEAD
 			if refMatch(prefixes, "HEAD") {
-				headOID, _ := repo.readRefRecur(*headResult)
+				headOID, _ := repo.readRefRecur(headResult)
 				if headOID != "" {
-					if err := sendLsRef(w, hexLen, "HEAD", headOID, shouldPeel, shouldSymrefs, headResult.Ref.ToPath(), repo); err != nil {
+					if err := sendLsRef(w, hexLen, "HEAD", headOID, shouldPeel, shouldSymrefs, hr.Ref.ToPath(), repo); err != nil {
 						return err
 					}
 				} else if shouldUnborn && shouldSymrefs {
-					line := fmt.Sprintf("unborn HEAD symref-target:%s\n", headResult.Ref.ToPath())
+					line := fmt.Sprintf("unborn HEAD symref-target:%s\n", hr.Ref.ToPath())
 					if err := writePktLine(w, []byte(line)); err != nil {
 						return err
 					}
 				}
 			}
-		} else {
+		case OIDValue:
 			if refMatch(prefixes, "HEAD") {
-				if err := sendLsRef(w, hexLen, "HEAD", headResult.OID, shouldPeel, shouldSymrefs, "", repo); err != nil {
+				if err := sendLsRef(w, hexLen, "HEAD", hr.OID, shouldPeel, shouldSymrefs, "", repo); err != nil {
 					return err
 				}
 			}

@@ -365,9 +365,11 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		for _, target := range cmd.Log.Targets {
 			oid, err := repo.readRefRecur(target)
 			if err != nil || oid == "" {
-				fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", target.OID)
-				if target.IsRef {
-					fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", target.Ref.ToPath())
+				switch v := target.(type) {
+				case OIDValue:
+					fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", v.OID)
+				case RefValue:
+					fmt.Fprintf(runOpts.Err, "invalid ref: %s\n", v.Ref.ToPath())
 				}
 				return ErrHandled
 			}

@@ -757,7 +757,7 @@ const mergeMsgName = "MERGE_MSG"
 
 func (repo *Repo) checkForUnfinishedMerge() error {
 	for _, name := range mergeHeadNames {
-		ref := RefOrOid{IsRef: true, Ref: Ref{Kind: RefNone, Name: name}}
+		ref := RefValue{Ref: Ref{Kind: RefNone, Name: name}}
 		oid, err := repo.readRefRecur(ref)
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
 			return err
@@ -774,7 +774,7 @@ func checkForOtherMerge(repo *Repo, mergeHeadName string) error {
 		if name == mergeHeadName {
 			continue
 		}
-		oid, err := repo.readRefRecur(RefOrOid{IsRef: true, Ref: Ref{Kind: RefNone, Name: name}})
+		oid, err := repo.readRefRecur(RefValue{Ref: Ref{Kind: RefNone, Name: name}})
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
 			return err
 		}
@@ -787,7 +787,7 @@ func checkForOtherMerge(repo *Repo, mergeHeadName string) error {
 
 func readAnyMergeHead(repo *Repo) (string, error) {
 	for _, name := range mergeHeadNames {
-		oid, err := repo.readRefRecur(RefOrOid{IsRef: true, Ref: Ref{Kind: RefNone, Name: name}})
+		oid, err := repo.readRefRecur(RefValue{Ref: Ref{Kind: RefNone, Name: name}})
 		if err != nil && !errors.Is(err, ErrRefNotFound) {
 			return "", err
 		}
@@ -866,12 +866,13 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		return nil, fmt.Errorf("target not found: %w", err)
 	}
 	targetName := ""
-	if headRef.IsRef {
-		targetName = headRef.Ref.Name
-	} else {
-		targetName = headRef.OID
+	switch v := headRef.(type) {
+	case RefValue:
+		targetName = v.Ref.Name
+	case OIDValue:
+		targetName = v.OID
 	}
-	targetOIDMaybe, err := repo.readRefRecur(*headRef)
+	targetOIDMaybe, err := repo.readRefRecur(headRef)
 	if err != nil && !errors.Is(err, ErrRefNotFound) {
 		return nil, err
 	}
@@ -901,10 +902,11 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		}
 
 		sourceName := ""
-		if action.Source.IsRef {
-			sourceName = action.Source.Ref.Name
-		} else {
-			sourceName = action.Source.OID
+		switch v := action.Source.(type) {
+		case RefValue:
+			sourceName = v.Ref.Name
+		case OIDValue:
+			sourceName = v.OID
 		}
 
 		targetOID := targetOIDMaybe
@@ -1060,7 +1062,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 
 		// exit early if there were conflicts
 		if len(conflicts) > 0 {
-			repo.writeRef(mergeHeadName, RefOrOid{OID: sourceOID})
+			repo.writeRef(mergeHeadName, OIDValue{OID: sourceOID})
 
 			msgPath := filepath.Join(repo.repoPath, mergeMsgName)
 			msg := ""
@@ -1113,7 +1115,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 			return nil, err
 		}
 
-		sourceOID, err := repo.readRefRecur(RefOrOid{IsRef: true, Ref: Ref{Kind: RefNone, Name: mergeHeadName}})
+		sourceOID, err := repo.readRefRecur(RefValue{Ref: Ref{Kind: RefNone, Name: mergeHeadName}})
 		if err != nil || sourceOID == "" {
 			return nil, errors.New("merge head not found")
 		}
@@ -1187,7 +1189,7 @@ func (repo *Repo) Merge(input MergeInput) (MergeResult, error) {
 		removeMergeState(repo)
 		_, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
-			Target:        RefOrOid{OID: targetOID},
+			Target:        OIDValue{OID: targetOID},
 			UpdateWorkDir: true,
 			Force:         true,
 		})
