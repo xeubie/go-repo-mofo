@@ -1,6 +1,7 @@
 package repomofo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -303,6 +304,18 @@ func (r *Repo) Restore(path string) error {
 		return err
 	}
 	return r.restore(joinPath(splitPath(rel)))
+}
+
+// Returns what HEAD currently points to — either a branch ref or a detached OID.
+func (r *Repo) Head() (RefOrOid, error) {
+	result, err := r.readRef("HEAD")
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, errors.New("HEAD not found")
+	}
+	return result, nil
 }
 
 // Points HEAD at the given ref or OID without modifying the index or working directory.

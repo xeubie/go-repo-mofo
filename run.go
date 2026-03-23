@@ -191,10 +191,11 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 
 		head, err := repo.Head()
 		if err == nil {
-			if head.IsRef {
-				fmt.Fprintf(runOpts.Out, "on branch %s\n\n", head.Ref.Name)
-			} else {
-				fmt.Fprintf(runOpts.Out, "HEAD detached at %s\n\n", head.OID)
+			switch h := head.(type) {
+			case RefValue:
+				fmt.Fprintf(runOpts.Out, "on branch %s\n\n", h.Ref.Name)
+			case OIDValue:
+				fmt.Fprintf(runOpts.Out, "HEAD detached at %s\n\n", h.OID)
 			}
 		}
 
@@ -270,8 +271,8 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 				return err
 			}
 			currentBranch := ""
-			if head.IsRef {
-				currentBranch = head.Ref.Name
+			if h, ok := head.(RefValue); ok {
+				currentBranch = h.Ref.Name
 			}
 
 			iter, err := repo.ListBranches()

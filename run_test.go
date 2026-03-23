@@ -1156,11 +1156,12 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("head failed: %v", err)
 		}
-		if !head.IsRef {
+		h, ok := head.(RefValue)
+		if !ok {
 			t.Fatal("expected HEAD to be a ref")
 		}
-		if head.Ref.Name != "stuff" {
-			t.Fatalf("current branch = %q, want %q", head.Ref.Name, "stuff")
+		if h.Ref.Name != "stuff" {
+			t.Fatalf("current branch = %q, want %q", h.Ref.Name, "stuff")
 		}
 	}
 

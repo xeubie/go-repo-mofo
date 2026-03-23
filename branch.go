@@ -92,27 +92,3 @@ func (repo *Repo) listBranches() (*RefIterator, error) {
 	return newRefIterator(headsDir, RefHead)
 }
 
-// HeadResult represents what HEAD points to.
-type HeadResult struct {
-	IsRef bool
-	Ref   Ref    // valid when IsRef == true
-	OID   string // valid when IsRef == false
-}
-
-// Returns what HEAD currently points to — either a branch ref or a detached OID.
-func (repo *Repo) Head() (*HeadResult, error) {
-	result, err := repo.readRef("HEAD")
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return nil, errors.New("HEAD not found")
-	}
-	switch v := result.(type) {
-	case RefValue:
-		return &HeadResult{IsRef: true, Ref: v.Ref}, nil
-	case OIDValue:
-		return &HeadResult{OID: v.OID}, nil
-	}
-	return nil, errors.New("HEAD not found")
-}
