@@ -280,6 +280,54 @@ func (rp *receivePack) readRefUpdates(hashKind HashKind, r io.Reader) ([]refUpda
 }
 
 func (rp *receivePack) executeRefUpdates(w io.Writer, repo *Repo, updates []refUpdate, options ReceivePackOptions) error {
+	if !options.SkipConnectivityCheck {
+		allConnected := func() bool {
+			iter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll})
+			for i := range updates {
+				if !isNullOID(updates[i].newOID) && !updates[i].skipUpdate {
+					iter.Include(updates[i].newOID)
+				}
+			}
+			for {
+				obj, err := iter.Next()
+				if err != nil {
+					return false
+				}
+				if obj == nil {
+					break
+				}
+				obj.Close()
+			}
+			return true
+		}()
+
+		if !allConnected {
+			for i := range updates {
+				if isNullOID(updates[i].newOID) {
+					continue
+				}
+				connected := func() bool {
+					iter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterAll})
+					iter.Include(updates[i].newOID)
+					for {
+						obj, err := iter.Next()
+						if err != nil {
+							return false
+						}
+						if obj == nil {
+							break
+						}
+						obj.Close()
+					}
+					return true
+				}()
+				if !connected {
+					updates[i].errorMessage = "missing necessary objects"
+				}
+			}
+		}
+	}
+
 	// skip if all ref updates already have errors
 	allErrors := true
 	for i := range updates {
@@ -290,6 +338,66 @@ func (rp *receivePack) executeRefUpdates(w io.Writer, repo *Repo, updates []refU
 	}
 	if allErrors {
 		return nil
+	}
+
+	// detect conflicting symref updates
+	refIndex := make(map[string]int, len(updates))
+	for i := range updates {
+		refIndex[updates[i].refName] = i
+	}
+	for i := range updates {
+		if updates[i].errorMessage != "" {
+			continue
+		}
+		result, err := repo.readRef(updates[i].refName)
+		if err != nil {
+			continue // ref doesn't exist yet, no symref conflict possible
+		}
+		rv, ok := result.(RefValue)
+		if !ok {
+			continue // not a symref
+		}
+		dstName := rv.Ref.ToPath()
+		dstIdx, found := refIndex[dstName]
+		if !found {
+			continue
+		}
+		dst := &updates[dstIdx]
+
+		updates[i].skipUpdate = true
+
+		if updates[i].oldOID == dst.oldOID && updates[i].newOID == dst.newOID {
+			continue
+		}
+
+		dst.skipUpdate = true
+
+		abbrev := 7
+		oldAbbrevI := updates[i].oldOID
+		if len(oldAbbrevI) > abbrev {
+			oldAbbrevI = oldAbbrevI[:abbrev]
+		}
+		newAbbrevI := updates[i].newOID
+		if len(newAbbrevI) > abbrev {
+			newAbbrevI = newAbbrevI[:abbrev]
+		}
+		oldAbbrevD := dst.oldOID
+		if len(oldAbbrevD) > abbrev {
+			oldAbbrevD = oldAbbrevD[:abbrev]
+		}
+		newAbbrevD := dst.newOID
+		if len(newAbbrevD) > abbrev {
+			newAbbrevD = newAbbrevD[:abbrev]
+		}
+
+		writeReceiveError(w, fmt.Sprintf(
+			"refusing inconsistent update between symref '%s' (%s..%s) and its target '%s' (%s..%s)",
+			updates[i].refName, oldAbbrevI, newAbbrevI,
+			dst.refName, oldAbbrevD, newAbbrevD,
+		))
+
+		updates[i].errorMessage = "inconsistent aliased update"
+		dst.errorMessage = "inconsistent aliased update"
 	}
 
 	// read HEAD to know current branch
