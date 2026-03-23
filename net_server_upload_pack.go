@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,14 +29,23 @@ const (
 	multiAckDetailed          // multi_ack_detailed
 )
 
-type filterOptions int
+type filterSpec interface {
+	filterSpec()
+}
 
-const (
-	filterNone filterOptions = iota
-	filterBlobNone
-	filterBlobLimit
-	filterTreeDepth
-)
+type filterBlobNone struct{}
+type filterBlobLimit struct{ limit int }
+type filterTreeDepth struct{ depth int }
+type filterSparseOID struct{ oid string }
+type filterObjectType struct{ kind string }
+type filterCombine struct{ specs []filterSpec }
+
+func (filterBlobNone) filterSpec()   {}
+func (filterBlobLimit) filterSpec()  {}
+func (filterTreeDepth) filterSpec()  {}
+func (filterSparseOID) filterSpec()  {}
+func (filterObjectType) filterSpec() {}
+func (filterCombine) filterSpec()    {}
 
 type allowUor struct {
 	tipSHA1       bool
@@ -68,10 +78,11 @@ type uploadPackSession struct {
 	deepenRelative bool
 
 	// request state
-	filterOpts  filterOptions
-	waitForDone bool
-	done        bool
-	seenHaves   bool
+	filterOpts   filterSpec
+	waitForDone  bool
+	done         bool
+	seenHaves    bool
+	uriProtocols []string
 }
 
 func newUploadPackSession() *uploadPackSession {
@@ -222,6 +233,14 @@ func (up *uploadPackSession) receiveNeeds(
 			if !up.filterCapRequested {
 				return fmt.Errorf("filter not negotiated")
 			}
+			if up.filterOpts != nil {
+				return fmt.Errorf("filter already set")
+			}
+			parsed, err := parseFilterSpec(lineStr[7:])
+			if err != nil {
+				return fmt.Errorf("invalid filter spec")
+			}
+			up.filterOpts = parsed
 			continue
 		}
 
@@ -598,6 +617,7 @@ type v2Config struct {
 	advertiseObjectInfo bool
 	advertiseBundleURIs bool
 	advertiseUnborn     bool
+	clientHashAlgo      HashKind
 	allowFilter         bool
 	allowRefInWant      bool
 	allowSidebandAll    bool
@@ -608,7 +628,7 @@ type v2Config struct {
 func (repo *Repo) UploadPack(r io.Reader, w io.Writer, options UploadPackOptions) error {
 	switch options.ProtocolVersion {
 	case 2:
-		v2cfg := v2Config{advertiseUnborn: true}
+		v2cfg := v2Config{advertiseUnborn: true, clientHashAlgo: repo.opts.Hash}
 		config, err := repo.loadConfig()
 		if err != nil {
 			return err
@@ -1052,6 +1072,10 @@ func processV2Request(w io.Writer, repo *Repo, cfg *v2Config, r io.Reader) (bool
 		return false, fmt.Errorf("no command requested")
 	}
 
+	if cfg.clientHashAlgo != repo.opts.Hash {
+		return false, fmt.Errorf("object format mismatch")
+	}
+
 	switch *command {
 	case v2CapLsRefs:
 		if err := lsRefs(w, repo, r); err != nil {
@@ -1074,6 +1098,23 @@ func processV2Request(w io.Writer, repo *Repo, cfg *v2Config, r io.Reader) (bool
 			}
 			if result.kind == pktLineFlush {
 				break
+			}
+		}
+		// send bundle config sections
+		bundleConfig, err := repo.loadConfig()
+		if err != nil {
+			return false, err
+		}
+		for _, section := range bundleConfig.sectionOrder {
+			if strings.HasPrefix(section, "bundle") {
+				if vars := bundleConfig.sections[section]; vars != nil {
+					for key, val := range vars {
+						line := fmt.Sprintf("%s.%s=%s", section, key, val)
+						if err := writePktLine(w, []byte(line)); err != nil {
+							return false, err
+						}
+					}
+				}
 			}
 		}
 		if err := writePktFlush(w); err != nil {
@@ -1108,8 +1149,12 @@ func receiveClientCapability(line string, hashKind HashKind, cfg *v2Config) bool
 			continue
 		}
 		rest := line[len(capName):]
-		if rest != "" && rest[0] != '=' {
-			continue
+		var value string
+		if rest != "" {
+			if rest[0] != '=' {
+				continue
+			}
+			value = rest[1:]
 		}
 		if v2CapHasCommand(cap) {
 			continue
@@ -1117,6 +1162,15 @@ func receiveClientCapability(line string, hashKind HashKind, cfg *v2Config) bool
 		_, advertised := v2CapAdvertise(cap, hashKind, cfg)
 		if !advertised {
 			continue
+		}
+		// handle object-format capability
+		if cap == v2CapObjectFormat && value != "" {
+			switch value {
+			case "sha1":
+				cfg.clientHashAlgo = SHA1Hash
+			case "sha256":
+				cfg.clientHashAlgo = SHA256Hash
+			}
 		}
 		return true
 	}
@@ -1152,7 +1206,21 @@ func lsRefs(w io.Writer, repo *Repo, r io.Reader) error {
 				prefixes = append(prefixes, arg[11:])
 			}
 		case arg == "unborn":
-			shouldUnborn = true
+			// check config to see if unborn is allowed
+			lsConfig, configErr := repo.loadConfig()
+			if configErr == nil {
+				if vars := lsConfig.GetSection("lsrefs"); vars != nil {
+					if v, ok := vars["unborn"]; ok {
+						if v != "ignore" {
+							shouldUnborn = true
+						}
+					} else {
+						shouldUnborn = true
+					}
+				} else {
+					shouldUnborn = true
+				}
+			}
 		}
 	}
 
@@ -1442,13 +1510,33 @@ func uploadPackV2(w io.Writer, repo *Repo, r io.Reader) error {
 			continue
 		}
 		if up.allowFilter && strings.HasPrefix(arg, "filter ") {
+			if up.filterOpts != nil {
+				return fmt.Errorf("filter already set")
+			}
+			parsed, err := parseFilterSpec(arg[7:])
+			if err != nil {
+				return fmt.Errorf("invalid filter spec")
+			}
+			up.filterOpts = parsed
 			continue
 		}
 		if up.allowSidebandAll && arg == "sideband-all" {
 			up.writerUseSideband = true
 			continue
 		}
+		if up.allowPackfileURIs && strings.HasPrefix(arg, "packfile-uris ") {
+			if len(up.uriProtocols) > 0 {
+				writePktError(w, up.writerUseSideband, "multiple packfile-uris lines forbidden")
+				return fmt.Errorf("client error")
+			}
+			up.uriProtocols = strings.Split(arg[14:], ",")
+			continue
+		}
 		// unknown arg, skip
+	}
+
+	if len(up.uriProtocols) > 0 && !up.writerUseSideband {
+		up.uriProtocols = nil
 	}
 
 	if len(wantObj) == 0 && !up.waitForDone {
@@ -1690,4 +1778,47 @@ func writePktError(w io.Writer, useSideband bool, msg string) error {
 	}
 	line := "ERR " + msg
 	return writePktLine(w, []byte(line))
+}
+
+func parseFilterSpec(spec string) (filterSpec, error) {
+	if spec == "blob:none" {
+		return filterBlobNone{}, nil
+	}
+	if strings.HasPrefix(spec, "blob:limit=") {
+		val, err := strconv.Atoi(spec[11:])
+		if err != nil {
+			return nil, fmt.Errorf("invalid filter spec")
+		}
+		return filterBlobLimit{limit: val}, nil
+	}
+	if strings.HasPrefix(spec, "tree:") {
+		val, err := strconv.Atoi(spec[5:])
+		if err != nil {
+			return nil, fmt.Errorf("invalid filter spec")
+		}
+		return filterTreeDepth{depth: val}, nil
+	}
+	if strings.HasPrefix(spec, "sparse:oid=") {
+		return filterSparseOID{oid: spec[11:]}, nil
+	}
+	if strings.HasPrefix(spec, "object:type=") {
+		return filterObjectType{kind: spec[12:]}, nil
+	}
+	if strings.HasPrefix(spec, "combine:") {
+		parts := strings.Split(spec[8:], "+")
+		var specs []filterSpec
+		for _, part := range parts {
+			decoded, err := url.PathUnescape(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid filter spec")
+			}
+			sub, err := parseFilterSpec(decoded)
+			if err != nil {
+				return nil, err
+			}
+			specs = append(specs, sub)
+		}
+		return filterCombine{specs: specs}, nil
+	}
+	return nil, fmt.Errorf("invalid filter spec")
 }
