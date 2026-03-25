@@ -782,11 +782,12 @@ func (por *PackObjectReader) initCache() error {
 	return nil
 }
 
-func (por *PackObjectReader) Close() {
+func (por *PackObjectReader) Close() error {
 	por.stream.close()
 	if por.deltaState != nil {
-		por.deltaState.baseReader.Close()
+		return por.deltaState.baseReader.Close()
 	}
+	return nil
 }
 
 func (por *PackObjectReader) Header() ObjectHeader {

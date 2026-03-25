@@ -71,7 +71,7 @@ type memoryObjectReader struct {
 	pos     uint64
 }
 
-func (r *memoryObjectReader) Close() {}
+func (r *memoryObjectReader) Close() error { return nil }
 
 func (r *memoryObjectReader) Header() ObjectHeader {
 	return r.header

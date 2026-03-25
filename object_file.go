@@ -151,13 +151,17 @@ type looseObjectReader struct {
 	header     ObjectHeader
 }
 
-func (r *looseObjectReader) Close() {
+func (r *looseObjectReader) Close() error {
+	var err error
 	if r.zlibReader != nil {
-		r.zlibReader.Close()
+		err = r.zlibReader.Close()
 	}
 	if r.file != nil {
-		r.file.Close()
+		if ferr := r.file.Close(); err == nil {
+			err = ferr
+		}
 	}
+	return err
 }
 
 func (r *looseObjectReader) Reset() error {

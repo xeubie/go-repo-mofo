@@ -477,7 +477,7 @@ func (repo *Repo) writeTag(input AddTagInput, targetOID Hash) (Hash, error) {
 
 // ObjectReader reads an object from loose storage or from a pack file.
 type ObjectReader interface {
-	Close()
+	Close() error
 	Header() ObjectHeader
 	Reset() error
 	Read(p []byte) (int, error)
@@ -576,10 +576,11 @@ func (repo *Repo) NewObject(oid Hash, full bool) (*Object, error) {
 	return obj, nil
 }
 
-func (o *Object) Close() {
+func (o *Object) Close() error {
 	if o.reader != nil {
-		o.reader.Close()
+		return o.reader.Close()
 	}
+	return nil
 }
 
 func (o *Object) parseContent(hashKind HashKind) error {
