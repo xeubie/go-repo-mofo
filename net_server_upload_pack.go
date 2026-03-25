@@ -345,8 +345,7 @@ func (up *uploadPackSession) deepen(
 	} else if up.deepenRelative {
 		// find reachable shallows
 		reachableShallows := getReachableShallows(repo, shallowOIDs, ourRefs)
-		maxDepth := depth
-		depthIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit, MaxDepth: &maxDepth, Full: true})
+		depthIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit, MaxDepth: depth, Full: true})
 		for _, oid := range reachableShallows {
 			depthIter.IncludeAtDepth(oid, 0)
 		}
@@ -369,8 +368,7 @@ func (up *uploadPackSession) deepen(
 			obj.Close()
 		}
 	} else {
-		maxDepth := depth - 1
-		depthIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit, MaxDepth: &maxDepth, Full: true})
+		depthIter := repo.NewObjectIterator(ObjectIteratorOptions{Kind: ObjectIterCommit, MaxDepth: depth - 1, Full: true})
 		for _, oid := range *wantObj {
 			depthIter.IncludeAtDepth(oid, 0)
 		}
@@ -383,7 +381,7 @@ func (up *uploadPackSession) deepen(
 				break
 			}
 			oidHex := obj.OID.Hex()
-			if depthIter.Depth == maxDepth {
+			if depthIter.Depth == depth-1 {
 				if !shallowOIDs[oidHex] && !notShallowOIDs[oidHex] {
 					writePktResponse(w, up.writerUseSideband, fmt.Sprintf("shallow %s\n", oidHex))
 				}

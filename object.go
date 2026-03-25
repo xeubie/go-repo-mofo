@@ -745,7 +745,7 @@ const (
 
 type ObjectIteratorOptions struct {
 	Kind     ObjectIterKind
-	MaxDepth *int
+	MaxDepth int  // 0 means unlimited (default)
 	Full     bool // if true, Next returns parsed objects; if false, returns raw objects
 }
 
@@ -776,7 +776,7 @@ func (it *ObjectIterator) Include(oid Hash) {
 }
 
 func (it *ObjectIterator) IncludeAtDepth(oid Hash, depth int) {
-	if it.options.MaxDepth != nil && depth > *it.options.MaxDepth {
+	if it.options.MaxDepth > 0 && depth > it.options.MaxDepth {
 		return
 	}
 	hex := oid.Hex()
