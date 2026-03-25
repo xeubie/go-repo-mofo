@@ -1,7 +1,9 @@
 package repomofo
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -582,7 +584,7 @@ func (repo *Repo) objectToFile(path string, te TreeEntry) error {
 			defer obj.Close()
 			data := make([]byte, obj.Size)
 			n, err := obj.reader.Read(data)
-			if err != nil && err.Error() != "EOF" {
+			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
 			data = data[:n]
@@ -689,7 +691,7 @@ type SwitchResult interface {
 // SwitchSuccess indicates a successful switch.
 type SwitchSuccess struct{}
 
-func (SwitchSuccess) switchResult()    {}
+func (SwitchSuccess) switchResult()   {}
 func (*SwitchConflict) switchResult() {}
 
 type SwitchOutput struct {

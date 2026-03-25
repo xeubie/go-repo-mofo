@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -26,7 +27,7 @@ func main() {
 	}
 
 	if err := repomofo.RunPrint(opts, args, cwdPath, runOpts); err != nil {
-		if err == repomofo.ErrHandled {
+		if errors.Is(err, repomofo.ErrHandled) {
 			os.Exit(1)
 		}
 		panic(err)

@@ -1,6 +1,7 @@
 package repomofo
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,17 +16,17 @@ type RunOpts struct {
 }
 
 var (
-	ErrRepoNotFound                                 = fmt.Errorf("repo not found")
-	ErrRepoAlreadyExists                            = fmt.Errorf("repo already exists")
-	ErrHandled                                      = fmt.Errorf("handled error")
-	ErrAddIndexPathNotFound                         = fmt.Errorf("add index path not found")
-	ErrRemoveIndexPathNotFound                      = fmt.Errorf("remove index path not found")
-	ErrRecursiveOptionRequired                      = fmt.Errorf("recursive option required")
-	ErrCannotRemoveFileWithStagedAndUnstagedChanges = fmt.Errorf("cannot remove file with staged and unstaged changes")
-	ErrCannotRemoveFileWithStagedChanges            = fmt.Errorf("cannot remove file with staged changes")
-	ErrCannotRemoveFileWithUnstagedChanges          = fmt.Errorf("cannot remove file with unstaged changes")
-	ErrInvalidSwitchTarget                          = fmt.Errorf("invalid switch target")
-	ErrPathIsOutsideRepo                            = fmt.Errorf("path is outside repo")
+	ErrRepoNotFound                                 = errors.New("repo not found")
+	ErrRepoAlreadyExists                            = errors.New("repo already exists")
+	ErrHandled                                      = errors.New("handled error")
+	ErrAddIndexPathNotFound                         = errors.New("add index path not found")
+	ErrRemoveIndexPathNotFound                      = errors.New("remove index path not found")
+	ErrRecursiveOptionRequired                      = errors.New("recursive option required")
+	ErrCannotRemoveFileWithStagedAndUnstagedChanges = errors.New("cannot remove file with staged and unstaged changes")
+	ErrCannotRemoveFileWithStagedChanges            = errors.New("cannot remove file with staged changes")
+	ErrCannotRemoveFileWithUnstagedChanges          = errors.New("cannot remove file with unstaged changes")
+	ErrInvalidSwitchTarget                          = errors.New("invalid switch target")
+	ErrPathIsOutsideRepo                            = errors.New("path is outside repo")
 )
 
 func Run(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) error {
@@ -58,32 +59,32 @@ func RunPrint(opts RepoOpts, args []string, cwdPath string, runOpts RunOpts) err
 	if err == nil {
 		return nil
 	}
-	switch err {
-	case ErrRepoAlreadyExists:
+	switch {
+	case errors.Is(err, ErrRepoAlreadyExists):
 		fmt.Fprintf(runOpts.Err,
 			"repo already exists, dummy.\n"+
 				"two repos in the same directory makes no sense.\n"+
 				"think about it.\n")
-	case ErrRepoNotFound:
+	case errors.Is(err, ErrRepoNotFound):
 		fmt.Fprintf(runOpts.Err,
 			"repo not found, dummy.\n"+
 				"either you're in the wrong place or you need to make a new one like this:\n\n")
 		printHelp(&[]commandKind{commandInit}[0], runOpts.Err)
-	case ErrAddIndexPathNotFound:
+	case errors.Is(err, ErrAddIndexPathNotFound):
 		fmt.Fprintf(runOpts.Err, "a path you are adding does not exist\n")
-	case ErrRemoveIndexPathNotFound:
+	case errors.Is(err, ErrRemoveIndexPathNotFound):
 		fmt.Fprintf(runOpts.Err, "a path you are removing does not exist\n")
-	case ErrRecursiveOptionRequired:
+	case errors.Is(err, ErrRecursiveOptionRequired):
 		fmt.Fprintf(runOpts.Err, "to do this on a dir, add the -r flag\n")
-	case ErrBranchAlreadyExists:
+	case errors.Is(err, ErrBranchAlreadyExists):
 		fmt.Fprintf(runOpts.Err, "branch already exists\n")
-	case ErrCannotDeleteCurrentBranch:
+	case errors.Is(err, ErrCannotDeleteCurrentBranch):
 		fmt.Fprintf(runOpts.Err, "cannot delete the current branch\n")
-	case ErrInvalidSwitchTarget:
+	case errors.Is(err, ErrInvalidSwitchTarget):
 		fmt.Fprintf(runOpts.Err, "your switch target doesn't look right and you should feel bad\n")
-	case ErrCannotRemoveFileWithStagedAndUnstagedChanges,
-		ErrCannotRemoveFileWithStagedChanges,
-		ErrCannotRemoveFileWithUnstagedChanges:
+	case errors.Is(err, ErrCannotRemoveFileWithStagedAndUnstagedChanges),
+		errors.Is(err, ErrCannotRemoveFileWithStagedChanges),
+		errors.Is(err, ErrCannotRemoveFileWithUnstagedChanges):
 		fmt.Fprintf(runOpts.Err, "a file has uncommitted changes. if you really want to do it, throw caution into the wind by adding the -f flag.\n")
 	default:
 		return err

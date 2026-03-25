@@ -365,4 +365,3 @@ func (r *Repo) Log(startOIDs []Hash) (*ObjectIterator, error) {
 
 	return iter, nil
 }
-
