@@ -649,7 +649,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Untrack([]string{"one/two/three.txt"}, false, false)
+			err = repo.Untrack([]string{"one/two/three.txt"}, UntrackOptions{})
 			if err != ErrCannotRemoveFileWithStagedAndUnstagedChanges {
 				t.Fatalf("expected ErrCannotRemoveFileWithStagedAndUnstagedChanges, got %v", err)
 			}
@@ -667,7 +667,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Untrack([]string{"one"}, false, false)
+			err = repo.Untrack([]string{"one"}, UntrackOptions{})
 			if err != ErrRecursiveOptionRequired {
 				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
 			}

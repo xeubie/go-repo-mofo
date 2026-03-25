@@ -273,9 +273,8 @@ type unaddCommand struct {
 }
 
 type untrackCommand struct {
-	Paths     []string
-	Force     bool
-	Recursive bool
+	Paths []string
+	Opts  UntrackOptions
 }
 
 type rmCommand struct {
@@ -414,9 +413,11 @@ func parseCommand(cmdArgs *commandArgs, hashKind HashKind) *command {
 			return nil
 		}
 		return &command{Kind: commandUntrack, Untrack: &untrackCommand{
-			Paths:     cmdArgs.PositionalArgs,
-			Force:     cmdArgs.Contains("-f"),
-			Recursive: cmdArgs.Contains("-r"),
+			Paths: cmdArgs.PositionalArgs,
+			Opts: UntrackOptions{
+				Force:     cmdArgs.Contains("-f"),
+				Recursive: cmdArgs.Contains("-r"),
+			},
 		}}
 
 	case commandRm:

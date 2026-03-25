@@ -217,6 +217,11 @@ type UnaddOptions struct {
 	Recursive bool
 }
 
+type UntrackOptions struct {
+	Force     bool
+	Recursive bool
+}
+
 type RemoveOptions struct {
 	Force         bool
 	Recursive     bool

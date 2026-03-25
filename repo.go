@@ -266,14 +266,14 @@ func (r *Repo) Unadd(paths []string, opts UnaddOptions) error {
 }
 
 // Removes the given paths from the index without deleting them from the working directory.
-func (r *Repo) Untrack(paths []string, force, recursive bool) error {
+func (r *Repo) Untrack(paths []string, opts UntrackOptions) error {
 	normalized, err := normalizePaths(r.workPath, paths)
 	if err != nil {
 		return err
 	}
 	return r.removePaths(normalized, RemoveOptions{
-		Force:         force,
-		Recursive:     recursive,
+		Force:         opts.Force,
+		Recursive:     opts.Recursive,
 		UpdateWorkDir: false,
 	})
 }

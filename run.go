@@ -130,7 +130,7 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		if err != nil {
 			return ErrRepoNotFound
 		}
-		return repo.Untrack(cmd.Untrack.Paths, cmd.Untrack.Force, cmd.Untrack.Recursive)
+		return repo.Untrack(cmd.Untrack.Paths, cmd.Untrack.Opts)
 
 	case commandRm:
 		repo, err := OpenRepo(cwdPath, opts)
