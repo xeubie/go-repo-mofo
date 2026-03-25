@@ -504,10 +504,9 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 			return "denyCurrentBranch = updateInstead needs a worktree"
 		}
 		_, err := repo.Switch(SwitchInput{
-			Kind:          SwitchKindReset,
-			Target:        OIDValue{OID: update.newOID},
-			UpdateWorkDir: true,
-			Force:         true,
+			Kind:   SwitchKindReset,
+			Target: OIDValue{OID: update.newOID},
+			Force:  true,
 		})
 		if err != nil {
 			return "failed to update worktree"

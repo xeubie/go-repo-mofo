@@ -345,7 +345,7 @@ func TestRun(t *testing.T) {
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
 				Target:        OIDValue{OID: commit1},
-				UpdateWorkDir: true,
+	
 			})
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
@@ -377,7 +377,7 @@ func TestRun(t *testing.T) {
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
 				Target:        OIDValue{OID: commit1},
-				UpdateWorkDir: true,
+	
 			})
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
@@ -401,7 +401,7 @@ func TestRun(t *testing.T) {
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
 				Target:        OIDValue{OID: commit1},
-				UpdateWorkDir: true,
+	
 			})
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
@@ -433,7 +433,7 @@ func TestRun(t *testing.T) {
 			result, err := repo.Switch(SwitchInput{
 				Kind:          SwitchKindSwitch,
 				Target:        OIDValue{OID: commit1},
-				UpdateWorkDir: true,
+	
 			})
 			if err != nil {
 				t.Fatalf("switch failed: %v", err)
@@ -613,7 +613,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Remove([]string{"no-such-file"}, RemoveOptions{UpdateWorkDir: true})
+			err = repo.Remove([]string{"no-such-file"}, RemoveOptions{})
 			if err != ErrRemoveIndexPathNotFound {
 				t.Fatalf("expected ErrRemoveIndexPathNotFound, got %v", err)
 			}
@@ -628,7 +628,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{UpdateWorkDir: true})
+			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{})
 			if err != ErrCannotRemoveFileWithUnstagedChanges {
 				t.Fatalf("expected ErrCannotRemoveFileWithUnstagedChanges, got %v", err)
 			}
@@ -745,7 +745,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{UpdateWorkDir: true})
+			err = repo.Remove([]string{"one/two/three.txt"}, RemoveOptions{})
 			if err != ErrCannotRemoveFileWithStagedChanges {
 				t.Fatalf("expected ErrCannotRemoveFileWithStagedChanges, got %v", err)
 			}
@@ -1013,7 +1013,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Remove([]string{"foo/bar/hi.txt"}, RemoveOptions{UpdateWorkDir: true})
+			err = repo.Remove([]string{"foo/bar/hi.txt"}, RemoveOptions{})
 			if err != ErrRemoveIndexPathNotFound {
 				t.Fatalf("expected ErrRemoveIndexPathNotFound, got %v", err)
 			}
@@ -1043,7 +1043,7 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open repo failed: %v", err)
 			}
-			err = repo.Remove([]string{"foo"}, RemoveOptions{UpdateWorkDir: true})
+			err = repo.Remove([]string{"foo"}, RemoveOptions{})
 			if err != ErrRecursiveOptionRequired {
 				t.Fatalf("expected ErrRecursiveOptionRequired, got %v", err)
 			}

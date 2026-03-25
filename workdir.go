@@ -223,9 +223,9 @@ type UntrackOptions struct {
 }
 
 type RemoveOptions struct {
-	Force         bool
-	Recursive     bool
-	UpdateWorkDir bool
+	Force           bool
+	Recursive       bool
+	SkipWorkDir bool
 }
 
 // indexDiffersFromWorkDir checks if the work dir file differs from the index entry.
@@ -406,16 +406,16 @@ func (repo *Repo) removePaths(paths []string, opts RemoveOptions) error {
 
 			if differsFromHead && differsFromWorkDir {
 				return ErrCannotRemoveFileWithStagedAndUnstagedChanges
-			} else if differsFromHead && opts.UpdateWorkDir {
+			} else if differsFromHead && !opts.SkipWorkDir {
 				return ErrCannotRemoveFileWithStagedChanges
-			} else if differsFromWorkDir && opts.UpdateWorkDir {
+			} else if differsFromWorkDir && !opts.SkipWorkDir {
 				return ErrCannotRemoveFileWithUnstagedChanges
 			}
 		}
 	}
 
 	// remove files from work dir
-	if opts.UpdateWorkDir {
+	if !opts.SkipWorkDir {
 		for p := range removedPaths {
 			fullPath := filepath.Join(repo.workPath, p)
 			os.Remove(fullPath)
@@ -674,10 +674,10 @@ type ResetInput struct {
 
 // SwitchInput holds the parameters for a switch/reset operation.
 type SwitchInput struct {
-	Kind          SwitchKind
-	Target        RefOrOid // the branch or OID to switch to
-	UpdateWorkDir bool
-	Force         bool
+	Kind            SwitchKind
+	Target          RefOrOid // the branch or OID to switch to
+	SkipWorkDir bool
+	Force           bool
 }
 
 // SwitchConflict holds paths that conflict with the switch.
@@ -868,7 +868,7 @@ func (repo *Repo) Switch(input SwitchInput) (*SwitchOutput, error) {
 		conflict = &SwitchConflict{}
 	}
 
-	if err := repo.migrate(changes, idx, input.UpdateWorkDir, conflict); err != nil {
+	if err := repo.migrate(changes, idx, !input.SkipWorkDir, conflict); err != nil {
 		return nil, err
 	}
 

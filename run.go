@@ -307,7 +307,7 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		if cmd.Kind != commandSwitchDir {
 			kind = SwitchKindReset
 		}
-		updateWorkDir := cmd.Kind != commandReset
+		preserveWorkDir := cmd.Kind == commandReset
 
 		repo, err := OpenRepo(cwdPath, opts)
 		if err != nil {
@@ -315,10 +315,10 @@ func runCommand(opts RepoOpts, cmd *command, cwdPath string, runOpts RunOpts) er
 		}
 
 		result, err := repo.Switch(SwitchInput{
-			Kind:          kind,
-			Target:        cmd.Switch.Target,
-			UpdateWorkDir: updateWorkDir,
-			Force:         cmd.Switch.Force,
+			Kind:            kind,
+			Target:          cmd.Switch.Target,
+			SkipWorkDir: preserveWorkDir,
+			Force:           cmd.Switch.Force,
 		})
 		if err != nil {
 			return err

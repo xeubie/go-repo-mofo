@@ -427,9 +427,8 @@ func parseCommand(cmdArgs *commandArgs, hashKind HashKind) *command {
 		return &command{Kind: commandRm, Rm: &rmCommand{
 			Paths: cmdArgs.PositionalArgs,
 			Opts: RemoveOptions{
-				Force:         cmdArgs.Contains("-f"),
-				Recursive:     cmdArgs.Contains("-r"),
-				UpdateWorkDir: true,
+				Force:     cmdArgs.Contains("-f"),
+				Recursive: cmdArgs.Contains("-r"),
 			},
 		}}
 

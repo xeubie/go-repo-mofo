@@ -1237,10 +1237,9 @@ func (repo *Repo) Merge(input MergeInput) (MergeOutput, error) {
 		}
 		removeMergeState(repo)
 		_, err := repo.Switch(SwitchInput{
-			Kind:          SwitchKindReset,
-			Target:        OIDValue{OID: targetOID},
-			UpdateWorkDir: true,
-			Force:         true,
+			Kind:   SwitchKindReset,
+			Target: OIDValue{OID: targetOID},
+			Force:  true,
 		})
 		if err != nil {
 			return MergeOutput{}, err

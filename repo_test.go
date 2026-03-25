@@ -64,7 +64,7 @@ func Simple(t *testing.T, store ObjectStore) {
 		t.Fatalf("commit b failed: %v", err)
 	}
 
-	err = repo.Remove([]string{"README.md"}, RemoveOptions{UpdateWorkDir: true})
+	err = repo.Remove([]string{"README.md"}, RemoveOptions{})
 	if err != nil {
 		t.Fatalf("remove README.md failed: %v", err)
 	}
@@ -118,7 +118,7 @@ func Simple(t *testing.T, store ObjectStore) {
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
 			Target:        OIDValue{OID: commitB},
-			UpdateWorkDir: true,
+
 		})
 		if err != nil {
 			t.Fatalf("reset-dir to commit b failed: %v", err)
@@ -141,7 +141,7 @@ func Simple(t *testing.T, store ObjectStore) {
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
 			Target:        OIDValue{OID: commitA},
-			UpdateWorkDir: true,
+
 		})
 		if err != nil {
 			t.Fatalf("reset-dir to commit a failed: %v", err)
@@ -164,7 +164,7 @@ func Simple(t *testing.T, store ObjectStore) {
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
 			Target:        OIDValue{OID: commitC},
-			UpdateWorkDir: true,
+
 		})
 		if err != nil {
 			t.Fatalf("reset-dir to commit c failed: %v", err)
@@ -190,7 +190,7 @@ func Simple(t *testing.T, store ObjectStore) {
 		result, err := repo.Switch(SwitchInput{
 			Kind:          SwitchKindReset,
 			Target:        RefValue{Ref: Ref{Kind: RefTag, Name: "1.0.0"}},
-			UpdateWorkDir: true,
+
 		})
 		if err != nil {
 			t.Fatalf("reset-dir to tag failed: %v", err)
@@ -242,7 +242,7 @@ func TestMerge(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -255,7 +255,7 @@ func TestMerge(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "bar"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "bar"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "bar"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -270,7 +270,7 @@ func TestMerge(t *testing.T) {
 	}
 	_ = commitH
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -279,7 +279,7 @@ func TestMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -292,7 +292,7 @@ func TestMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +351,7 @@ func TestMerge(t *testing.T) {
 
 	// if we try merging master into foo, it fast forwards
 	{
-		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 			t.Fatal(err)
 		}
 		mergeResult, err := repo.Merge(MergeInput{
@@ -421,7 +421,7 @@ func TestMergeSideBranch(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "side"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "side"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "side"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,7 +435,7 @@ func TestMergeSideBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,7 +467,7 @@ func TestMergeSideBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "topic"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "topic"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -524,14 +524,14 @@ func TestMergeConflictSameFile(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt", "a\ny\nc")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -625,14 +625,14 @@ func TestMergeConflictSameFileEmptyBase(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt", "a\ny\nc\n")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -723,14 +723,14 @@ func TestMergeConflictSameFileAutoresolved(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt", "a\nb\ny")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -796,14 +796,14 @@ func TestMergeConflictSameFileAutoresolvedNeighboringLines(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt", "a\nf\nc\nd")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -845,16 +845,16 @@ func TestMergeConflictModifyDelete(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Remove([]string{"f.txt"}, RemoveOptions{UpdateWorkDir: true}); err != nil {
+	if err := repo.Remove([]string{"f.txt"}, RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -930,20 +930,20 @@ func TestMergeConflictDeleteModify(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Remove([]string{"f.txt"}, RemoveOptions{UpdateWorkDir: true}); err != nil {
+	if err := repo.Remove([]string{"f.txt"}, RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt", "2")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1023,14 +1023,14 @@ func TestMergeConflictFileDir(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt/g.txt", "hi")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1109,14 +1109,14 @@ func TestMergeConflictDirFile(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "f.txt", "hi")
 	if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1205,7 +1205,7 @@ func TestMergeConflictBinary(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1215,7 +1215,7 @@ func TestMergeConflictBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1310,14 +1310,14 @@ func TestMergeConflictShuffle(t *testing.T) {
 		if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 			t.Fatal(err)
 		}
 		addFile(t, repo, "f.txt", "a\nx\nb")
 		if _, err := repo.Commit(CommitMetadata{Message: "d"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1445,14 +1445,14 @@ int slow_square(int x) {
 		if _, err := repo.Commit(CommitMetadata{Message: "c"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 			t.Fatal(err)
 		}
 		addFile(t, repo, "f.txt", commitD)
 		if _, err := repo.Commit(CommitMetadata{Message: "d"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+		if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1527,7 +1527,7 @@ func TestCherryPick(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1545,7 +1545,7 @@ func TestCherryPick(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "e"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1607,7 +1607,7 @@ func TestCherryPickConflict(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "readme.md", "c")
@@ -1623,7 +1623,7 @@ func TestCherryPickConflict(t *testing.T) {
 	if _, err := repo.Commit(CommitMetadata{Message: "e"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1715,7 +1715,7 @@ func TestLog(t *testing.T) {
 	if err := repo.AddBranch(AddBranchInput{Name: "foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "foo.md", "d")
@@ -1723,7 +1723,7 @@ func TestLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "master.md", "c")
@@ -1731,7 +1731,7 @@ func TestLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "foo"}}}); err != nil {
 		t.Fatal(err)
 	}
 	addFile(t, repo, "foo.md", "e")
@@ -1744,7 +1744,7 @@ func TestLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}, UpdateWorkDir: true}); err != nil {
+	if _, err := repo.Switch(SwitchInput{Kind: SwitchKindSwitch, Target: RefValue{Ref: Ref{Kind: RefHead, Name: "master"}}}); err != nil {
 		t.Fatal(err)
 	}
 

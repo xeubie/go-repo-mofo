@@ -272,9 +272,9 @@ func (r *Repo) Untrack(paths []string, opts UntrackOptions) error {
 		return err
 	}
 	return r.removePaths(normalized, RemoveOptions{
-		Force:         opts.Force,
-		Recursive:     opts.Recursive,
-		UpdateWorkDir: false,
+		Force:           opts.Force,
+		Recursive:       opts.Recursive,
+		SkipWorkDir: true,
 	})
 }
 
@@ -316,20 +316,19 @@ func (r *Repo) Head() (RefOrOid, error) {
 // Resets HEAD and the index to the target without updating the working directory.
 func (r *Repo) Reset(input ResetInput) (*SwitchOutput, error) {
 	return r.Switch(SwitchInput{
-		Kind:          SwitchKindReset,
-		Target:        input.Target,
-		UpdateWorkDir: false,
-		Force:         input.Force,
+		Kind:            SwitchKindReset,
+		Target:          input.Target,
+		SkipWorkDir: true,
+		Force:           input.Force,
 	})
 }
 
 // Resets HEAD, the index, and the working directory to the target.
 func (r *Repo) ResetDir(input ResetInput) (*SwitchOutput, error) {
 	return r.Switch(SwitchInput{
-		Kind:          SwitchKindReset,
-		Target:        input.Target,
-		UpdateWorkDir: true,
-		Force:         input.Force,
+		Kind:   SwitchKindReset,
+		Target: input.Target,
+		Force:  input.Force,
 	})
 }
 
