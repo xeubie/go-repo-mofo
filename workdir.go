@@ -67,7 +67,9 @@ func (repo *Repo) Status() (*Status, error) {
 		mergeSourceTreeOID, err := repo.readCommitTree(mergeSourceOID)
 		if err == nil {
 			mergeSourceTree = make(map[string]TreeEntry)
-			repo.flattenTree(mergeSourceTreeOID, "", mergeSourceTree) //nolint:errcheck
+			if err := repo.flattenTree(mergeSourceTreeOID, "", mergeSourceTree); err != nil {
+				return nil, fmt.Errorf("flatten merge source tree: %w", err)
+			}
 		}
 	}
 
@@ -279,8 +281,8 @@ func (repo *Repo) indexDiffersFromWorkDir(entry *indexEntry, fullPath string) (b
 	if err != nil {
 		return true, nil
 	}
+	defer f.Close()
 	oid, err := repo.writeBlobFromReader(f, uint64(info.Size()))
-	f.Close()
 	if err != nil {
 		return false, err
 	}
