@@ -145,7 +145,7 @@ func (up *uploadPackSession) writeV0Ref(repo *Repo, w io.Writer, ourRefs map[str
 		if up.allowFilter {
 			caps += " filter"
 		}
-		caps += fmt.Sprintf(" object-format=%s agent=git/2.51.2", repo.opts.Hash.Name())
+		caps += fmt.Sprintf(" object-format=%s agent=git/2.51.2", repo.opts.Hash.HashName())
 
 		line := fmt.Sprintf("%s %s\x00%s\n", oid.Hex(), refName, caps)
 		if err := writePktLine(w, []byte(line)); err != nil {
@@ -1009,7 +1009,7 @@ func v2CapAdvertise(c v2Capability, hashKind HashKind, cfg *v2Config) (string, b
 	case v2CapServerOption:
 		return "", true
 	case v2CapObjectFormat:
-		return hashKind.Name(), true
+		return hashKind.HashName(), true
 	case v2CapSessionID:
 		return "", cfg.advertiseSID
 	case v2CapObjectInfo:

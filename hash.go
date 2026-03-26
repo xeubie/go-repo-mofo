@@ -15,7 +15,7 @@ const (
 	SHA256HashKind
 )
 
-func (h HashKind) Name() string {
+func (h HashKind) HashName() string {
 	switch h {
 	case SHA1HashKind:
 		return "sha1"

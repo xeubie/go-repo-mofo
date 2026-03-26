@@ -124,7 +124,7 @@ func (rp *receivePack) advertiseRef(w io.Writer, hashKind HashKind, path string,
 	if rp.preferOfsDelta {
 		caps += " ofs-delta"
 	}
-	caps += " object-format=" + hashKind.Name()
+	caps += " object-format=" + hashKind.HashName()
 
 	line := fmt.Sprintf("%s %s\x00%s\n", oid.Hex(), path, caps)
 	err := writePktLine(w, []byte(line))
@@ -244,7 +244,7 @@ func (rp *receivePack) readRefUpdates(hashKind HashKind, r io.Reader) ([]refUpda
 				if objHash == "" {
 					objHash = "sha1"
 				}
-				if objHash != hashKind.Name() {
+				if objHash != hashKind.HashName() {
 					return nil, fmt.Errorf("unsupported object format: %s", objHash)
 				}
 			}
