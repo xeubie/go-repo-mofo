@@ -672,11 +672,6 @@ const (
 	SwitchKindReset
 )
 
-type ResetInput struct {
-	Target RefOrOid
-	Force  bool
-}
-
 type SwitchInput struct {
 	Target RefOrOid
 	Force  bool

@@ -115,7 +115,7 @@ func Simple(t *testing.T, store ObjectStore) {
 
 	// reset-dir to commit b
 	{
-		result, err := repo.ResetDir(ResetInput{
+		result, err := repo.ResetDir(SwitchInput{
 			Target: OIDValue{OID: commitB},
 		})
 		if err != nil {
@@ -136,7 +136,7 @@ func Simple(t *testing.T, store ObjectStore) {
 
 	// reset-dir to commit a
 	{
-		result, err := repo.ResetDir(ResetInput{
+		result, err := repo.ResetDir(SwitchInput{
 			Target: OIDValue{OID: commitA},
 		})
 		if err != nil {
@@ -157,7 +157,7 @@ func Simple(t *testing.T, store ObjectStore) {
 
 	// reset-dir to commit c
 	{
-		result, err := repo.ResetDir(ResetInput{
+		result, err := repo.ResetDir(SwitchInput{
 			Target: OIDValue{OID: commitC},
 		})
 		if err != nil {
@@ -181,7 +181,7 @@ func Simple(t *testing.T, store ObjectStore) {
 
 	// reset-dir to the tag
 	{
-		result, err := repo.ResetDir(ResetInput{
+		result, err := repo.ResetDir(SwitchInput{
 			Target: RefValue{Ref: Ref{Kind: RefTag, Name: "1.0.0"}},
 		})
 		if err != nil {

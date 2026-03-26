@@ -503,7 +503,7 @@ func (rp *receivePack) applyRefUpdate(w io.Writer, repo *Repo, update *refUpdate
 		if rp.isBare {
 			return "denyCurrentBranch = updateInstead needs a worktree"
 		}
-		_, err := repo.ResetDir(ResetInput{
+		_, err := repo.ResetDir(SwitchInput{
 			Target: OIDValue{OID: update.newOID},
 			Force:  true,
 		})
